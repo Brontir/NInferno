@@ -5,6 +5,7 @@
 // represented inputs. n(x) = x / sqrt(mean(x^2) + 1e-6) over a column.
 
 #include "core/tensor.h"
+#include "ninferno/ops/gemma4_attention.h"
 
 #include <cuda_runtime.h>
 
@@ -111,30 +112,15 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
  * (llama.cpp's build_attn_rel_pos folds the bias minus the sink into the mask, which the softmax
  * adds after the scale, beside a zero sink.)
  *
- * over the keys j with 0 <= p_i - p_j (and p_i - p_j < window on a sliding layer), for every head
- * h with its key head h / (Hq / Hkv). q: BF16 [D, Hq, T] (prepared), r: BF16 [Dr, Hq, T],
- * sink: BF16 [Hq, T], bias: FP32 [extent, Dr]; the cache planes k, v are BF16
- * [D, capacity, Hkv] with position p in slot p % capacity (capacity = max context on a full
- * layer, >= window + T - 1 on a sliding one) and already hold this call's keys.
- * positions: device I32 [T]. out: BF16 [D, Hq, T]. One sequence.
+ * over the keys j with 0 <= p_i - p_j (and p_i - p_j < window on a sliding layer, cache.window),
+ * for every head h with its key head h / (Hq / Hkv). q: BF16 [D, Hq, T, B] (prepared), r: BF16
+ * [Dr, Hq, T, B], sink: BF16 [Hq, T, B], bias: FP32 [extent, Dr], positions: device I32 [T, B],
+ * out: BF16 [D, Hq, T, B]. The keys and values are a Gemma4KvLayer's BF16 planes (one ring image
+ * per batch row, or the paged pool through block tables; gemma4_attention.h), already holding this
+ * call's rows (gemma4_kv_append): batch row b reads its binding cache.rows[b]. D <= 128, Dr <= 32.
  */
-struct Inkling2AttentionParams {
-    std::int32_t extent   = 0;
-    std::int32_t window   = 0; // 0: a full layer
-    std::int32_t capacity = 0;
-    std::int32_t max_keys = 0; // bounds p + 1 over the calls made under this launch
-};
-
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
-                        const Tensor& k_cache, const Tensor& v_cache, const Tensor& positions,
-                        const Inkling2AttentionParams& params, Tensor& out, cudaStream_t stream);
-
-/**
- * Op: append this call's K and V rows to a visit's cache planes:
- *   k_cache[:, p_t % capacity, g] = k[:, g, t], likewise v. k, v: BF16 [D, Hkv, T].
- */
-void inkling2_kv_append(const Tensor& k, const Tensor& v, const Tensor& positions,
-                        std::int32_t capacity, Tensor& k_cache, Tensor& v_cache,
-                        cudaStream_t stream);
+                        const Gemma4KvLayer& cache, const Tensor& positions, std::int32_t extent,
+                        Tensor& out, cudaStream_t stream);
 
 } // namespace ninferno::ops

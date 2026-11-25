@@ -246,85 +246,138 @@ int prepare_case(bool full, std::uint32_t seed) {
            verify_pointwise("inkling2_prepare r", from_device_bf16(drr, r.size()), er, kBf16Out);
 }
 
-// Keys 0..last appended in calls of `chunk`, then the last call's queries attend.
-int attention_case(int window, int extent, std::uint32_t seed) {
-    const int d = 128, hq = 24, hkv = 8, dr = 16, chunk = 3, last = 62;
-    const int capacity = window ? window + chunk - 1 : last + 1;
-    const int keys     = last + 1;
-    auto k             = bf16_values(std::size_t(d) * hkv * keys, seed, -1.5f, 1.5f),
-         v             = bf16_values(std::size_t(d) * hkv * keys, seed + 1, -2, 2);
+enum class KvLayout { Ring, Images, Paged };
+
+// Per batch row b: keys 0..last_b appended in calls of `chunk` (gemma4_kv_append through the row's
+// own binding), then the last call's queries attend. Ring: one sequence, slot storage with no
+// bindings; Images: two rows, one ring image each; Paged: two rows of a full layer in a page pool,
+// their pages scattered and interleaved.
+int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout) {
+    const int d = 128, hq = 24, hkv = 8, dr = 16, chunk = 3, tokens = 3;
+    const int batch = layout == KvLayout::Ring ? 1 : 2;
+    const int base  = layout == KvLayout::Paged ? 150 : 62; // the paged rows span three pages
+    std::vector<int> last(static_cast<std::size_t>(batch));
+    for (int b = 0; b < batch; ++b) { last[std::size_t(b)] = base - 7 * b; }
+    const int keys     = base + 1;
+    const int capacity = window ? window + chunk - 1 : keys;
+    const int pages = 6, per_row = 3;
+    const std::vector<int> table = {3, 0, 5, 1, 4, 2}; // I32 [per_row, 2]: row 0 then row 1
+    std::vector<std::vector<float>> k(std::size_t(batch)), v(std::size_t(batch));
+    for (int b = 0; b < batch; ++b) {
+        k[std::size_t(b)] = bf16_values(std::size_t(d) * hkv * keys, seed + 10 * b, -1.5f, 1.5f);
+        v[std::size_t(b)] = bf16_values(std::size_t(d) * hkv * keys, seed + 10 * b + 1, -2, 2);
+    }
     std::vector<float> bias(std::size_t(extent) * dr);
     fill_uniform(bias, seed + 2, -1, 1);
-    DeviceBuffer kc(std::size_t(d) * capacity * hkv * 2), vc(std::size_t(d) * capacity * hkv * 2);
-    Tensor tkc(kc.p, DType::BF16, {d, capacity, hkv}), tvc(vc.p, DType::BF16, {d, capacity, hkv});
-    for (int first = 0; first < keys; first += chunk) {
-        const int n = std::min(chunk, keys - first);
-        std::vector<float> ks(k.begin() + std::ptrdiff_t(first) * d * hkv,
-                              k.begin() + std::ptrdiff_t(first + n) * d * hkv);
-        std::vector<float> vs(v.begin() + std::ptrdiff_t(first) * d * hkv,
-                              v.begin() + std::ptrdiff_t(first + n) * d * hkv);
-        std::vector<int> pos(static_cast<std::size_t>(n));
-        for (int i = 0; i < n; ++i) { pos[std::size_t(i)] = first + i; }
-        auto dks = to_device_bf16(ks), dvs = to_device_bf16(vs), dpos = to_device_i32(pos);
-        Tensor tk(dks.p, DType::BF16, {d, hkv, n}), tv(dvs.p, DType::BF16, {d, hkv, n}),
-            tp(dpos.p, DType::I32, {n});
-        ops::inkling2_kv_append(tk, tv, tp, capacity, tkc, tvc, nullptr);
+    const std::size_t plane = layout == KvLayout::Paged ? std::size_t(d) * 64 * pages * hkv
+                                                        : std::size_t(d) * capacity * hkv * batch;
+    DeviceBuffer kc(plane * 2), vc(plane * 2);
+    auto dtable = to_device_i32(table);
+    ops::Gemma4KvLayer cache;
+    cache.window = window;
+    if (layout == KvLayout::Paged) {
+        cache.k            = Tensor(kc.p, DType::BF16, {d, 64, pages, hkv});
+        cache.v            = Tensor(vc.p, DType::BF16, {d, 64, pages, hkv});
+        cache.block_tables = Tensor(dtable.p, DType::I32, {per_row, 2});
+    } else if (layout == KvLayout::Images) {
+        cache.k = Tensor(kc.p, DType::BF16, {d, capacity, hkv, batch});
+        cache.v = Tensor(vc.p, DType::BF16, {d, capacity, hkv, batch});
+    } else {
+        cache.k = Tensor(kc.p, DType::BF16, {d, capacity, hkv});
+        cache.v = Tensor(vc.p, DType::BF16, {d, capacity, hkv});
     }
-    const std::vector<int> positions = {last - 2, last - 1, last};
-    const int tokens                 = 3;
-    auto q    = bf16_values(std::size_t(d) * hq * tokens, seed + 3, -1.5f, 1.5f),
-         r    = bf16_values(std::size_t(dr) * hq * tokens, seed + 4, -2, 2);
-    auto sink = bf16_values(std::size_t(hq) * tokens, seed + 5, -4, 4);
+    std::vector<DeviceBuffer> row_ids;
+    row_ids.reserve(std::size_t(batch));
+    for (int b = 0; b < batch; ++b) {
+        ops::Gemma4KvLayer one = cache;
+        if (layout != KvLayout::Ring) {
+            row_ids.push_back(to_device_i32(std::vector<int>{b}));
+            one.rows = Tensor(row_ids.back().p, DType::I32, {1});
+        }
+        const int count = last[std::size_t(b)] + 1;
+        for (int first = 0; first < count; first += chunk) {
+            const int n    = std::min(chunk, count - first);
+            const auto& kb = k[std::size_t(b)];
+            const auto& vb = v[std::size_t(b)];
+            std::vector<float> ks(kb.begin() + std::ptrdiff_t(first) * d * hkv,
+                                  kb.begin() + std::ptrdiff_t(first + n) * d * hkv);
+            std::vector<float> vs(vb.begin() + std::ptrdiff_t(first) * d * hkv,
+                                  vb.begin() + std::ptrdiff_t(first + n) * d * hkv);
+            std::vector<int> pos(static_cast<std::size_t>(n));
+            for (int i = 0; i < n; ++i) { pos[std::size_t(i)] = first + i; }
+            auto dks = to_device_bf16(ks), dvs = to_device_bf16(vs), dpos = to_device_i32(pos);
+            const Tensor tk(dks.p, DType::BF16, {d, hkv, n, 1}),
+                tv(dvs.p, DType::BF16, {d, hkv, n, 1}), tp(dpos.p, DType::I32, {n, 1});
+            ops::gemma4_kv_append(tk, tv, tp, one, nullptr);
+        }
+    }
+    auto rows_all = to_device_i32(std::vector<int>{0, 1});
+    if (layout != KvLayout::Ring) { cache.rows = Tensor(rows_all.p, DType::I32, {batch}); }
+    std::vector<int> positions;
+    for (int b = 0; b < batch; ++b) {
+        for (int t = 0; t < tokens; ++t) { positions.push_back(last[std::size_t(b)] - 2 + t); }
+    }
+    auto q    = bf16_values(std::size_t(d) * hq * tokens * batch, seed + 3, -1.5f, 1.5f),
+         r    = bf16_values(std::size_t(dr) * hq * tokens * batch, seed + 4, -2, 2);
+    auto sink = bf16_values(std::size_t(hq) * tokens * batch, seed + 5, -4, 4);
     auto dq = to_device_bf16(q), drr = to_device_bf16(r), ds = to_device_bf16(sink),
          db = to_device_f32(bias);
-    auto dp = to_device_i32(std::vector<int>(positions));
-    DeviceBuffer dout(std::size_t(d) * hq * tokens * 2);
-    Tensor tq(dq.p, DType::BF16, {d, hq, tokens}), tr(drr.p, DType::BF16, {dr, hq, tokens});
-    Tensor ts(ds.p, DType::BF16, {hq, tokens}), tb(db.p, DType::FP32, {dr, extent});
-    Tensor tp(dp.p, DType::I32, {tokens}), to(dout.p, DType::BF16, {d, hq, tokens});
-    ops::Inkling2AttentionParams params{extent, window, capacity, keys};
-    ops::inkling2_attention(tq, tr, ts, tb, tkc, tvc, tp, params, to, nullptr);
+    auto dp = to_device_i32(positions);
+    DeviceBuffer dout(std::size_t(d) * hq * tokens * batch * 2);
+    Tensor tq(dq.p, DType::BF16, {d, hq, tokens, batch}),
+        tr(drr.p, DType::BF16, {dr, hq, tokens, batch});
+    Tensor ts(ds.p, DType::BF16, {hq, tokens, batch}), tb(db.p, DType::FP32, {dr, extent});
+    Tensor tp(dp.p, DType::I32, {tokens, batch}), to(dout.p, DType::BF16, {d, hq, tokens, batch});
+    ops::inkling2_attention(tq, tr, ts, tb, cache, tp, extent, to, nullptr);
     cuda_synchronize();
-    std::vector<double> expected(std::size_t(d) * hq * tokens);
+    std::vector<double> expected(std::size_t(d) * hq * tokens * batch);
     const double sc = 1.0 / std::sqrt(double(d));
-    for (int t = 0; t < tokens; ++t) {
-        for (int h = 0; h < hq; ++h) {
-            const int g = h / (hq / hkv), p = positions[std::size_t(t)];
-            std::vector<double> s;
-            std::vector<int> js;
-            for (int j = 0; j <= p; ++j) {
-                if (window && p - j >= window) { continue; }
-                double dot = 0;
-                for (int i = 0; i < d; ++i) {
-                    dot += double(q[(std::size_t(t) * hq + h) * d + i]) *
-                           k[(std::size_t(j) * hkv + g) * d + i];
-                }
-                dot *= sc;
-                if (p - j < extent) {
-                    for (int i = 0; i < dr; ++i) {
-                        dot += double(r[(std::size_t(t) * hq + h) * dr + i]) *
-                               bias[std::size_t(p - j) * dr + i];
+    for (int b = 0; b < batch; ++b) {
+        const auto& kb = k[std::size_t(b)];
+        const auto& vb = v[std::size_t(b)];
+        for (int t = 0; t < tokens; ++t) {
+            const std::size_t col = std::size_t(b) * tokens + std::size_t(t);
+            for (int h = 0; h < hq; ++h) {
+                const int g = h / (hq / hkv), p = positions[col];
+                std::vector<double> s;
+                std::vector<int> js;
+                for (int j = 0; j <= p; ++j) {
+                    if (window && p - j >= window) { continue; }
+                    double dot = 0;
+                    for (int i = 0; i < d; ++i) {
+                        dot += double(q[(col * hq + h) * d + i]) *
+                               kb[(std::size_t(j) * hkv + g) * d + i];
                     }
+                    dot *= sc;
+                    if (p - j < extent) {
+                        for (int i = 0; i < dr; ++i) {
+                            dot += double(r[(col * hq + h) * dr + i]) *
+                                   bias[std::size_t(p - j) * dr + i];
+                        }
+                    }
+                    s.push_back(dot);
+                    js.push_back(j);
                 }
-                s.push_back(dot);
-                js.push_back(j);
-            }
-            const double sk = sink[std::size_t(t) * hq + h];
-            double m        = sk;
-            for (double x : s) { m = std::max(m, x); }
-            double z = std::exp(sk - m);
-            for (auto& x : s) { z += (x = std::exp(x - m)); }
-            for (int i = 0; i < d; ++i) {
-                double acc = 0;
-                for (std::size_t n = 0; n < s.size(); ++n) {
-                    acc += s[n] * v[(std::size_t(js[n]) * hkv + g) * d + i];
+                const double sk = sink[col * hq + h];
+                double m        = sk;
+                for (double x : s) { m = std::max(m, x); }
+                double z = std::exp(sk - m);
+                for (auto& x : s) { z += (x = std::exp(x - m)); }
+                for (int i = 0; i < d; ++i) {
+                    double acc = 0;
+                    for (std::size_t n = 0; n < s.size(); ++n) {
+                        acc += s[n] * vb[(std::size_t(js[n]) * hkv + g) * d + i];
+                    }
+                    expected[(col * hq + h) * d + i] = acc / z;
                 }
-                expected[(std::size_t(t) * hq + h) * d + i] = acc / z;
             }
         }
     }
-    return verify_pointwise(window ? "inkling2_attention sliding" : "inkling2_attention full",
-                            from_device_bf16(dout, expected.size()), expected, kBf16Out);
+    const char* name = layout == KvLayout::Paged    ? "inkling2_attention paged"
+                       : layout == KvLayout::Images ? "inkling2_attention images"
+                       : window                     ? "inkling2_attention sliding"
+                                                    : "inkling2_attention full";
+    return verify_pointwise(name, from_device_bf16(dout, expected.size()), expected, kBf16Out);
 }
 
 } // namespace
@@ -344,9 +397,11 @@ int main() {
     failures += control_case(2304, 3, 71u);
     failures += prepare_case(true, 81u);
     failures += prepare_case(false, 91u);
-    failures += attention_case(0, 16, 101u);  // full layer, the bias ends below the context
-    failures += attention_case(8, 8, 111u);   // sliding ring of window + chunk - 1 slots
-    failures += attention_case(0, 128, 121u); // full layer, every distance biased
+    failures += attention_case(0, 16, 101u, KvLayout::Ring);  // the bias ends below the context
+    failures += attention_case(8, 8, 111u, KvLayout::Ring);   // a ring of window + chunk - 1 slots
+    failures += attention_case(0, 128, 121u, KvLayout::Ring); // every distance biased
+    failures += attention_case(8, 8, 131u, KvLayout::Images); // two sequences, a ring image each
+    failures += attention_case(0, 64, 141u, KvLayout::Paged); // two sequences in a page pool
     std::cout << (failures ? "FAIL" : "OK") << " inkling2\n";
     return failures ? 1 : 0;
 }

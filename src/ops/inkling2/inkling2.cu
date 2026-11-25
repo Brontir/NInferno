@@ -5,6 +5,7 @@
 #include "ninferno/ops/inkling2.h"
 
 #include "core/device.h" // CUDA_CHECK
+#include "ops/softmax_attention/gemma4/kv_address.h"
 
 #include <cuda_bf16.h>
 
@@ -247,17 +248,25 @@ struct AttnParams {
     const float* bias;
     const std::int32_t* positions;
     __nv_bfloat16* out;
-    int q_heads, kv_heads, d, dr, extent, window, capacity;
+    detail::Gemma4KvAddress kv;
+    int q_heads, kv_heads, d, dr, extent, window, tokens;
 };
 
+// One block a (head, query column, batch row): the batch row's keys through its binding
+// (kv_address.h: a ring image or a page table row).
 __global__ void attention_kernel(AttnParams p) {
-    const int h = blockIdx.x, t = blockIdx.y, lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+    const int h = blockIdx.x, t = blockIdx.y, b = blockIdx.z, lane = threadIdx.x & 31,
+              warp = threadIdx.x >> 5;
     const int g            = h / (p.q_heads / p.kv_heads);
-    const int pos          = p.positions[t];
+    const std::int64_t col = static_cast<std::int64_t>(b) * p.tokens + t;
+    const int pos          = p.positions[col];
     const int low          = p.window ? max(0, pos - p.window + 1) : 0;
     const float sc         = rsqrtf(static_cast<float>(p.d));
-    const __nv_bfloat16* q = p.q + (static_cast<std::int64_t>(t) * p.q_heads + h) * p.d;
-    const __nv_bfloat16* r = p.r + (static_cast<std::int64_t>(t) * p.q_heads + h) * p.dr;
+    const __nv_bfloat16* q = p.q + (col * p.q_heads + h) * p.d;
+    const __nv_bfloat16* r = p.r + (col * p.q_heads + h) * p.dr;
+    const int binding      = detail::gemma4_kv_binding(p.kv, b);
+    const std::int64_t base = detail::gemma4_kv_plane_offset(p.kv, binding) +
+                              static_cast<std::int64_t>(g) * p.kv.capacity * p.d;
     float qv[4], acc[4] = {0, 0, 0, 0};
     for (int j = 0; j < 4; ++j) {
         const int i = lane + 32 * j;
@@ -266,9 +275,9 @@ __global__ void attention_kernel(AttnParams p) {
     // The bias and the sink join the mask, after the scale (llama.cpp folds them into kq_mask).
     const float rv = lane < p.dr ? __bfloat162float(r[lane]) : 0.0F;
     float m = -INFINITY, z = 0;
-    const std::int64_t plane = static_cast<std::int64_t>(g) * p.capacity * p.d;
     for (int key = low + warp; key <= pos; key += kAttnWarps) {
-        const std::int64_t row = plane + static_cast<std::int64_t>(key % p.capacity) * p.d;
+        const std::int64_t row =
+            base + static_cast<std::int64_t>(detail::gemma4_kv_slot(p.kv, binding, key)) * p.d;
         const int dist         = pos - key;
         float s                = 0;
         for (int j = 0; j < 4; ++j) {
@@ -296,7 +305,7 @@ __global__ void attention_kernel(AttnParams p) {
     }
     __syncthreads();
     if (warp != 0) { return; }
-    const float sink = __bfloat162float(p.sink[static_cast<std::int64_t>(t) * p.q_heads + h]);
+    const float sink = __bfloat162float(p.sink[col * p.q_heads + h]);
     float mt         = sink;
     for (int w = 0; w < kAttnWarps; ++w) { mt = fmaxf(mt, sm[w]); }
     float zt = expf(sink - mt);
@@ -305,26 +314,13 @@ __global__ void attention_kernel(AttnParams p) {
         cw[w] = sm[w] == -INFINITY ? 0.0F : expf(sm[w] - mt);
         zt += sz[w] * cw[w];
     }
-    __nv_bfloat16* o = p.out + (static_cast<std::int64_t>(t) * p.q_heads + h) * p.d;
+    __nv_bfloat16* o = p.out + (col * p.q_heads + h) * p.d;
     for (int j = 0; j < 4; ++j) {
         const int i = lane + 32 * j;
         if (i >= p.d) { continue; }
         float sum = 0;
         for (int w = 0; w < kAttnWarps; ++w) { sum += sacc[w][i] * cw[w]; }
         o[i] = __float2bfloat16(sum / zt);
-    }
-}
-
-__global__ void kv_append_kernel(const __nv_bfloat16* k, const __nv_bfloat16* v,
-                                 const std::int32_t* positions, __nv_bfloat16* kc,
-                                 __nv_bfloat16* vc, int kv_heads, int d, int capacity) {
-    const int t = blockIdx.y, g = blockIdx.x;
-    const std::int64_t src = (static_cast<std::int64_t>(t) * kv_heads + g) * d;
-    const std::int64_t dst = (static_cast<std::int64_t>(g) * capacity + positions[t] % capacity) *
-                             static_cast<std::int64_t>(d);
-    for (int i = threadIdx.x; i < d; i += blockDim.x) {
-        kc[dst + i] = k[src + i];
-        vc[dst + i] = v[src + i];
     }
 }
 
@@ -441,52 +437,40 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
 }
 
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
-                        const Tensor& k_cache, const Tensor& v_cache, const Tensor& positions,
-                        const Inkling2AttentionParams& params, Tensor& out, cudaStream_t stream) {
+                        const Gemma4KvLayer& cache, const Tensor& positions, std::int32_t extent,
+                        Tensor& out, cudaStream_t stream) {
     const char* op = "inkling2_attention";
     need_bf16(q, op, "q");
     need_bf16(r, op, "r");
     need_bf16(sink, op, "sink");
-    need_bf16(k_cache, op, "k_cache");
-    need_bf16(v_cache, op, "v_cache");
     need_bf16(out, op, "out");
     need_f32(bias, op, "bias");
-    const int d = q.ne[0], hq = q.ne[1], tokens = q.ne[2], dr = r.ne[0], hkv = k_cache.ne[2];
-    need(d <= 128 && dr <= 32 && hq % hkv == 0 && sink.ne[0] == hq && sink.ne[1] == tokens &&
-             bias.ne[0] == dr && bias.ne[1] == params.extent && k_cache.ne[0] == d &&
-             k_cache.ne[1] == params.capacity && positions.ne[0] == tokens,
-         op, "D <= 128, Dr <= 32, sink [Hq, T], bias [extent, Dr], caches [D, capacity, Hkv]");
+    const int d = q.ne[0], hq = q.ne[1], tokens = q.ne[2], batch = q.ne[3], dr = r.ne[0];
+    const auto kv = detail::gemma4_kv_binding(cache, d, cache.k.ne[cache.block_tables.data ? 3 : 2],
+                                              op);
+    const int hkv = cache.k.ne[cache.block_tables.data ? 3 : 2];
+    need(!kv.fp8, op, "BF16 cache planes");
+    need(kv.batch == batch, op, "one binding a batch row");
+    need(d <= 128 && dr <= 32 && hq % hkv == 0 && r.ne[1] == hq && r.ne[2] == tokens &&
+             r.ne[3] == batch && sink.ne[0] == hq && sink.ne[1] == tokens && sink.ne[2] == batch &&
+             bias.ne[0] == dr && bias.ne[1] == extent && positions.ne[0] == tokens &&
+             positions.ne[1] == batch && out.ne[0] == d && out.ne[1] == hq && out.ne[2] == tokens &&
+             out.ne[3] == batch,
+         op, "D <= 128, Dr <= 32, q/out [D, Hq, T, B], r [Dr, Hq, T, B], sink [Hq, T, B], "
+             "bias [extent, Dr], positions [T, B]");
     AttnParams p{};
     p.q         = static_cast<const __nv_bfloat16*>(q.data),
     p.r         = static_cast<const __nv_bfloat16*>(r.data);
     p.sink      = static_cast<const __nv_bfloat16*>(sink.data);
-    p.k         = static_cast<const __nv_bfloat16*>(k_cache.data),
-    p.v         = static_cast<const __nv_bfloat16*>(v_cache.data);
+    p.k         = static_cast<const __nv_bfloat16*>(cache.k.data),
+    p.v         = static_cast<const __nv_bfloat16*>(cache.v.data);
     p.bias      = static_cast<const float*>(bias.data),
     p.positions = static_cast<const std::int32_t*>(positions.data);
     p.out       = static_cast<__nv_bfloat16*>(out.data);
-    p.q_heads = hq, p.kv_heads = hkv, p.d = d, p.dr = dr;
-    p.extent = params.extent, p.window = params.window, p.capacity = params.capacity;
-    attention_kernel<<<dim3(hq, tokens), 32 * kAttnWarps, 0, stream>>>(p);
-    CUDA_CHECK(cudaGetLastError());
-}
-
-void inkling2_kv_append(const Tensor& k, const Tensor& v, const Tensor& positions,
-                        std::int32_t capacity, Tensor& k_cache, Tensor& v_cache,
-                        cudaStream_t stream) {
-    const char* op = "inkling2_kv_append";
-    need_bf16(k, op, "k");
-    need_bf16(v, op, "v");
-    need_bf16(k_cache, op, "k_cache");
-    need_bf16(v_cache, op, "v_cache");
-    const int d = k.ne[0], hkv = k.ne[1], tokens = k.ne[2];
-    need(v.ne[0] == d && v.ne[1] == hkv && k_cache.ne[0] == d && k_cache.ne[1] == capacity &&
-             k_cache.ne[2] == hkv && positions.ne[0] == tokens,
-         op, "k, v [D, Hkv, T] and caches [D, capacity, Hkv]");
-    kv_append_kernel<<<dim3(hkv, tokens), 128, 0, stream>>>(
-        static_cast<const __nv_bfloat16*>(k.data), static_cast<const __nv_bfloat16*>(v.data),
-        static_cast<const std::int32_t*>(positions.data), static_cast<__nv_bfloat16*>(k_cache.data),
-        static_cast<__nv_bfloat16*>(v_cache.data), hkv, d, capacity);
+    p.kv        = kv.address;
+    p.q_heads = hq, p.kv_heads = hkv, p.d = d, p.dr = dr, p.tokens = tokens;
+    p.extent = extent, p.window = cache.window;
+    attention_kernel<<<dim3(hq, tokens, batch), 32 * kAttnWarps, 0, stream>>>(p);
     CUDA_CHECK(cudaGetLastError());
 }
 

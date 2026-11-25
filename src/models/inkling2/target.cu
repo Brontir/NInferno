@@ -244,14 +244,16 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         see("Vcur-0", vv);
         see("Rcur-0", r);
         auto& slot = slots_[static_cast<std::size_t>(v.slot)];
-        Tensor kc(slot.k.p, DType::BF16, {D, slot.capacity, Hkv}),
-            vc(slot.v.p, DType::BF16, {D, slot.capacity, Hkv});
-        ops::inkling2_kv_append(k3, v3, positions, slot.capacity, kc, vc, s);
+        ops::Gemma4KvLayer kv; // one sequence's slot storage (a ring on a sliding layer)
+        kv.k      = Tensor(slot.k.p, DType::BF16, {D, slot.capacity, Hkv});
+        kv.v      = Tensor(slot.v.p, DType::BF16, {D, slot.capacity, Hkv});
+        kv.window = full ? 0 : c_.sliding_window;
+        ops::gemma4_kv_append(k3, v3, positions, kv, s);
         Tensor context = tmp(Hq * D);
         Tensor c3(context.data, DType::BF16, {D, Hq, T});
-        ops::Inkling2AttentionParams ap{c_.extent(v.layer), full ? 0 : c_.sliding_window,
-                                        slot.capacity, max_context_};
-        ops::inkling2_attention(q3, r3, sink, L.relative_bias, kc, vc, positions, ap, c3, s);
+        const Tensor sink3(sink.data, DType::BF16, {Hq, T, 1});
+        ops::inkling2_attention(q3, r3, sink3, L.relative_bias, kv, positions.view({T, 1}),
+                                c_.extent(v.layer), c3, s);
         see("kqv_out-0", context);
         ops::sigmoid_mul(gate, context, s);
         see("node_83", context);
