@@ -44,6 +44,16 @@ __device__ __forceinline__ float moe_bias(const GemmArgs& a, std::int64_t index)
 
 __device__ __forceinline__ float moe_sigmoid(float v) { return 1.0F / (1.0F + expf(-v)); }
 
+// Situ (Inkling 2): alpha = the gate's soft cap, limit = the up's. Out of line, so the other
+// activations' kernels keep their code: every expert kernel holds every case of the switch below,
+// and the kernel facts count the code outside the K loop over all of them (sass_counts: a callee is
+// not counted). Inlined, its two tanhf raised every MoE kernel's outside stall 10-40 % and moved
+// sealed routes/moe_pick bands of models that never call it (#1226). Its own calls pay one call and
+// return an output value, beside two tanhf.
+__device__ __noinline__ float moe_situ(float g, float u, float alpha, float limit) {
+    return alpha * tanhf(g / alpha) * (1.0F / (1.0F + expf(-g))) * (limit * tanhf(u / limit));
+}
+
 __device__ __forceinline__ float moe_activation(const GemmArgs& a, float g, float u) {
     switch (a.activation) {
     case 1: { // GeGluTanh
@@ -59,8 +69,8 @@ __device__ __forceinline__ float moe_activation(const GemmArgs& a, float g, floa
         const float r = fmaxf(u, 0.0F);
         return r * r;
     }
-    case 4: // Situ (Inkling 2): alpha = the gate's soft cap, limit = the up's
-        return a.alpha * tanhf(g / a.alpha) * moe_sigmoid(g) * (a.limit * tanhf(u / a.limit));
+    case 4: // Situ (Inkling 2)
+        return moe_situ(g, u, a.alpha, a.limit);
     default: // SwiGlu
         return g * moe_sigmoid(g) * u;
     }
