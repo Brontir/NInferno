@@ -215,6 +215,7 @@ struct BoardTally {
     int kept_mmq_boundary = 0; // demoted ggml_mmq entries kept at T 9..16 (keeps_mmq_boundary)
     int gap_bands     = 0; // gaps of the table answered by a predicted band under evidence (#1068)
     int band_over_mmq = 0; // of them, a demoted ggml_mmq entry at T 9-16 moved off ggml_mmq
+    int analyzer      = 0; // T 1-8 answered by the analyzer's ranked list under evidence
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
     std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
@@ -304,7 +305,8 @@ void check_answered_before_tuner() {
                 continue;
             }
             const std::string_view source = answer->evidence.source;
-            const bool dispatch           = source == "route-table" || source == "nvfp4-half-l2";
+            const bool dispatch =
+                source == "route-table" || source == "nvfp4-half-l2" || source == "analyzer";
             ++compared;
             from_table += source == "route-table" ? 1 : 0;
             if (*answered != dispatch) {
@@ -317,8 +319,11 @@ void check_answered_before_tuner() {
         fail("answered_before_tuner: " + std::to_string(compared) + " widths compared, " +
              std::to_string(from_table) + " from the table: the check is vacuous");
     }
-    // The R8 call: the table holds T = 1, the dispatch does not take it there.
+    // The R8 call: the table holds T = 1, the dispatch does not take it there. Under evidence the
+    // analyzer's list answers T = 1 ahead of the table (analyzer_entry); legacy reads no list, so
+    // the R8 case is asked there.
     const ScopedDeviceClass scoped(d);
+    const ops::ScopedRoutePolicy legacy(RoutePolicy::Legacy);
     const auto r8 = generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
     if (!r8 || r8->route.family != generic::Family::R8Mma) {
         fail("q4k 4096x6656 a8 T=1: the dispatch takes no R8 schedule: the R8 case is not met");
@@ -440,7 +445,15 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
         ee.kind == Kind::Predicted && ee.source == "route-table" && ee.demoted_source.empty() &&
         (le.kind == Kind::Ranker || (auto_list && le.source == "route-table" &&
                                      (le.kind == Kind::Borrowed || le.kind == Kind::Transferred)));
-    if (gap_band) {
+    // T 1-8 outside a prefill under evidence: the analyzer's ranked list (routes/pick "ranked",
+    // route_authorities.cpp analyzer_entry) answers ahead of every authority but the pins, the
+    // probe, the profile and Volta's rules, whatever legacy's answer was: the one decision source
+    // at these widths. Legacy reads no list. A move like any other below.
+    const bool analyzer = ee.kind == Kind::Predicted && ee.source == "analyzer" &&
+                          ee.demoted_source.empty() && c.tokens <= 8 && !c.prefill;
+    if (analyzer) {
+        ++tally.analyzer;
+    } else if (gap_band) {
         ++tally.gap_bands;
         // F1's losing pattern (#614): a demoted ggml_mmq entry at T 9-16 that the MMQ boundary
         // would have kept, answered by a band of another route. Counted and printed, so the
@@ -672,6 +685,7 @@ Json board_json(const RegretBoard& b, const char* tables, const BoardTally& t) {
                 {"demoted_same_route", t.demoted_same_route},
                 {"gap_bands", t.gap_bands},
                 {"band_over_mmq", t.band_over_mmq},
+                {"analyzer", t.analyzer},
                 {"moved_by_regime", regimes},
                 {"moves", t.moves}};
 }
@@ -815,7 +829,8 @@ int main(int argc, char** argv) {
                 std::cout << ", " << t.demoted_same_route << " demoted to the same route, "
                           << t.kept_mmq_boundary << " kept at the MMQ boundary, " << t.gap_bands
                           << " gaps answered by a predicted band (" << t.band_over_mmq
-                          << " of them off a demoted ggml_mmq at T 9-16)\n";
+                          << " of them off a demoted ggml_mmq at T 9-16), " << t.analyzer
+                          << " answered by the analyzer's list (T 1-8)\n";
                 if (std::string_view(b.own_build_set) == kBuildSet) {
                     written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
                 }
