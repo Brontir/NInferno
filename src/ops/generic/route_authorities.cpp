@@ -125,22 +125,19 @@ std::optional<RouteAnswer> volta_hmma(const Ask& ask, const Problem& problem,
 // ahead of the route tables, the dense tuner's entry and the rules (vec, R8, MMQ verify, rmma):
 // at these widths the analyzer is the one decision source where the board has a file. A prefill
 // call (the prefill profile, whatever its width) and a list none of whose routes is admitted fall
-// through to the authorities below.
+// through to the authorities below (analyzer_walk).
 std::optional<RouteAnswer> analyzer_entry(const Ask& ask, const Problem& problem,
                                           const Weight& weight) {
     if (ask.prefill()) return std::nullopt;
-    for (const Route r : table_ranked_routes(problem, ask.tokens)) {
-        if (route_admits(r, weight, problem.policy) && profile_admits(r, ask, &weight)) {
-            Evidence e;
-            e.kind     = Evidence::Kind::Predicted;
-            e.ranker   = Evidence::Ranker::None;
-            e.source   = "analyzer";
-            e.donor    = "route-pick";
-            e.distance = 0;
-            return RouteAnswer{r, std::move(e)};
-        }
-    }
-    return std::nullopt;
+    const auto r = analyzer_walk(table_ranked_routes(problem, ask.tokens), ask, problem, weight);
+    if (!r) return std::nullopt;
+    Evidence e;
+    e.kind     = Evidence::Kind::Predicted;
+    e.ranker   = Evidence::Ranker::None;
+    e.source   = "analyzer";
+    e.donor    = "route-pick";
+    e.distance = 0;
+    return RouteAnswer{*r, std::move(e)};
 }
 
 constexpr NamedAuthority kSelectAuthorities[] = {
@@ -735,6 +732,18 @@ std::string evidence_text(const Evidence& e) {
 
 std::string evidence_columns(const Evidence& e) {
     return std::string(e.source) + ',' + evidence_kind_name(e.kind);
+}
+
+std::optional<Route> analyzer_walk(std::span<const Route> ranked, const Ask& ask,
+                                   const Problem& problem, const Weight& weight) {
+    for (const Route r : ranked) {
+        if (r.family == Family::R8Mma &&
+            r8_call_refusal(problem, weight, ask.tokens) == R8CallRefusal::DecodeFit) {
+            continue;
+        }
+        if (route_admits(r, weight, problem.policy) && profile_admits(r, ask, &weight)) return r;
+    }
+    return std::nullopt;
 }
 
 } // namespace ninferno::ops::detail::generic
