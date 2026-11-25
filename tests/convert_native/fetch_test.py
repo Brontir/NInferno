@@ -593,6 +593,22 @@ def main() -> int:
                  and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in result.stdout
                  and "chat_template.jinja" in notes and "generation_config.json" in notes
                  and "tokenizer.json" not in notes)
+            # A base snapshot with tokenizer_config.json but no tokenizer.json (#1218: a cache that
+            # once fetched the base's config files only): the pair is not mixed with the GGUF's
+            # rebuilt tokenizer.json; both are rebuilt from the GGUF metadata.
+            gguf_half, _, _ = synthetic_gguf.qwen_case(work / "qwen-src4", False, None, 33, rebuilt=True,
+                                                       base_model="https://huggingface.co/org/qwen-base-half")
+            hub.add_repo("org/qwen-base-half", {"tokenizer_config.json": base_files["tokenizer_config.json"],
+                                                "config.json": base_files["config.json"]})
+            hub.add_repo("org/qwen-gguf4", {"model-Q8_0.gguf": gguf_half.read_bytes()})
+            half = subprocess.run([str(native), "--fetch", "org/qwen-gguf4", "--cache", str(work / "cache-e2e")],
+                                  cwd=repository, capture_output=True, text=True, env=environment)
+            case("a base without tokenizer.json gives neither tokenizer file (#1218)",
+                 half.returncode == 0
+                 and "base model org/qwen-base-half has no tokenizer.json" in half.stdout
+                 and "tokenizer files from the base model" not in half.stdout)
+            if half.returncode:
+                errors.append(half.stderr[-1500:])
 
             # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
             # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),

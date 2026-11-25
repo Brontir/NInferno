@@ -90,6 +90,10 @@ void say(const AcquireOptions& options, const std::string& line) {
 // from its base model, as overrides. The GGUF's own chat template and end-of-sequence ids win
 // (a quantized instruct model often names its pretrained base, whose template differs); the
 // base supplies what the metadata keeps only approximately, the Hugging Face tokenizer itself.
+// tokenizer.json and tokenizer_config.json name the same added tokens and special flags, so they
+// come from one source: the base gives the ones wanted only when its snapshot holds all of them
+// (a cached snapshot may hold tokenizer_config.json alone, #1218), else both are rebuilt from
+// the GGUF.
 void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, ConvertOptions& options) {
     if (!fs::is_regular_file(fetched.model)) { return; }
     std::map<std::string, std::string> rebuilt;
@@ -116,6 +120,21 @@ void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, Conve
     options_for_base.before_download = {};
     try {
         const auto files = fetch_model(*base, options_for_base);
+        const auto pair  = [](const std::string& role) {
+            return role == "tokenizer.json" || role == "tokenizer_config.json";
+        };
+        std::string missing;
+        for (const auto& role : wanted) {
+            if (pair(role) && !fs::exists(files.snapshot / role)) { missing = role; }
+        }
+        if (!missing.empty()) {
+            std::erase_if(wanted, pair);
+            if (fetch.log) {
+                fetch.log("base model " + *base + " has no " + missing +
+                          ": tokenizer.json and tokenizer_config.json are both rebuilt from the "
+                          "GGUF metadata");
+            }
+        }
         std::string taken;
         for (const auto& role : wanted) {
             const auto path = files.snapshot / role;
