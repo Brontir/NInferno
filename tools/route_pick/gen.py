@@ -63,8 +63,11 @@ RANK_LO, RANK_HI = 1, 8
 # die's activation rate. TU102 / TU104 / TU106 (Turing, sm_75): the activation-ring (ahead) latency kernel that sm_75
 # launches for one-token-tile K-quant tiles is priced 1.2-1.3x its time and the plain w1x8 0.9x (RTX 2080 Ti, Q4_K SwiGLU
 # 12288 x 4096 T 4: w1x4 114.9 us priced 139.6, w1x8 139.7 priced 125.6), so the lists move SwiGLU to w1x8 (Qwen3.5-9B
-# Q4_K_M -1.3 / -0.75 / -9.9 % at C 1 / 2 / 4, #1183).
-HELD_CHIPS = ('ad102', 'tu102', 'tu104', 'tu106')
+# Q4_K_M -1.3 / -0.75 / -9.9 % at C 1 / 2 / 4, #1183). GA106 / AD106 (narrow-bus GDDR6: RTX 3060, RTX 4060 Ti): the
+# analyzer prices w2x2 8-19 % above its time and w1x8 1-18 % below (the wave term, #1224), so the lists move T 5-8 off
+# the fastest schedule (Qwen3.5-9B Q4_K_M at C 5 / 6 / 7 / 8: RTX 3060 -2.1 / -1.2 / -1.1 / -1.4 %, RTX 4060 Ti -0.7 to
+# -1.1 %).
+HELD_CHIPS = ('ad102', 'ad106', 'ga106', 'tu102', 'tu104', 'tu106')
 LO, HI = 9, 16
 # The narrow band (#785): on these compute capabilities the file also holds T 17..NARROW_HI, which answers the int8
 # calls of those widths outside the prefill profile (speculative verify rounds, decode batches) ahead of the cost

@@ -49,7 +49,7 @@ left out. The T 9-32 `bands` keep the classes and widths above.
 A chip in `gen.py` `HELD_CHIPS` gets no ranked list, so its T 1-8 calls are answered by its route table and the rules
 as before; it keeps its bands where it has them (a Turing chip has none, so no file). Held today: AD102 (the analyzer
 prices rmma 12-16 % below its time there, #1211) and TU102 / TU104 / TU106 (the activation-ring latency kernel sm_75
-launches is priced 1.2-1.3x its time, the plain w1x8 0.9x, #1183).
+launches is priced 1.2-1.3x its time, the plain w1x8 0.9x, #1183). GA106 / AD106 (the RTX 3060 and RTX 4060 Ti: w2x2 priced 8-19 % above its time, w1x8 1-18 % below, the wave term of #1224; Qwen3.5-9B Q4_K_M at C 5-8 -1.1 to -2.1 % and -0.7 to -1.1 % against master).
 
 The engine (`route_table.cpp` `table_ranked_routes`, `route_authorities.cpp` `analyzer_entry`) reads the lists on the
 board the file was priced for, under `--route-policy evidence`, at any distance from a table. The select list's last
