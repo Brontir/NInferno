@@ -71,6 +71,11 @@ def main():
     # A K of whole 32-value steps but not of whole Q4_K superblocks (supports(): K % 256): no route at all.
     assert analyzer.price_ns(sm89, F, dict(odd, k=5216), 'rmma.m1.n1.w1x8') is None
     assert analyzer.rank(sm89, F, dict(odd, k=5216)) == []
+    # R8's own K step (format_traits.h r8_k_values, 32 for the groupwise q4): a padded q4 weight takes any K, R8 does not.
+    q4 = dict(format='q4', epilogue='store', n=4096, k=4112, T=2)
+    assert analyzer.price_ns(sm89, F, q4, 'r8.w4r1') is None and analyzer.price_ns(sm89, F, dict(q4, k=4096), 'r8.w4r1') is not None
+    # r8_fits at T 1: a K whose activation passes 48 KB of shared memory (K 49152 x 36 / 32 = 54 KB).
+    assert analyzer.price_ns(sm89, F, dict(q4, k=49152, T=1), 'r8.w4r1') is None
     assert analyzer.price_ns(sm89, F, dict(odd, k=4096), 'rmma.m1.n1.w1x8.c2') is None
     print('boards %d, shapes %d, T 1-8: %d failures' % (len(bs), len(shapes), failures))
     return 1 if failures else 0

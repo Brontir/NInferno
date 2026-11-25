@@ -80,6 +80,9 @@ BITS = {f: v[0] for f, v in FORMATS.items()}
 # values, ggml_plane_bytes; NVFP4's 64; the groupwise and BF16 / FP8 layouts take any K): no route of it otherwise.
 FORMAT_K = dict({f: 256 for f in ('q4k', 'q5k', 'q6k', 'q3k', 'q2k', 'iq4xs', 'iq3s', 'iq3xxs', 'iq2s', 'iq2xs', 'iq2xxs',
                                   'iq1s', 'iq1m')}, q40=32, q41=32, q50=32, q51=32, iq4nl=32, nvfp4=64)
+# format_traits.h r8_k_values: the K one R8 step of the format covers (r8_refusal Extent); 32 for the others.
+R8_K_VALUES = {'q4k': 64, 'q5k': 64, 'q6k': 128, 'q3k': 128, 'q2k': 128}
+R8_STATIC_SMEM = 48 * 1024        # arch_limits.h kStaticSharedBytesPerBlock: r8_fits' bound on a decode call's activation
 # generic_select.cpp k_multiple: the K step rmma_refusal requires of a register-MMA route (run_values: a lane's run;
 # the ggml 32-value block formats their block).
 RMMA_K_MULTIPLE = dict({f: 32 for f in FORMATS}, bf16=8, q8=8, fp8=16, fp8r32=16, nvfp4=16, q4=16, q5=16, q6=16)
@@ -711,6 +714,8 @@ def _price(gpu, F, shape, route, P, issue=False):
     (fam, Wp, R), m = (route, 0, 0), _R8.match(route)
     if m:
         fam, Wp, R = 'r8', int(m.group(1)), int(m.group(2))
+        if k % R8_K_VALUES.get(fmt, 32) != 0:                  # r8_refusal Extent
+            return None
         nt = 1 if T <= 1 else 2 if T <= 2 else 4 if T <= 4 else 8
         r = None if T > 8 else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt, epilogue=EPI.get(ep, '0'),
                                       pre=0 if T <= 1 else 1)
@@ -745,6 +750,8 @@ def _price(gpu, F, shape, route, P, issue=False):
         smem = (math.ceil(k / 32.0 * (40.0 if codec in R8_SUMS else 36.0) / 8.0) * 8.0) if T <= 1 else 0.0
         if c['cc'] < 80 and R8_GRID_WORDS.get(codec, 0):
             smem += 4.0 * R8_GRID_WORDS[codec] + 4.0
+        if T <= 1 and smem > R8_STATIC_SMEM:                    # r8_fits: a decode call's activation does not fit
+            return None
     elif route == 'ggml_mmq':
         # Rows and K in whole tiles only: on other rows the launch demotes it, on other K the selection refuses it.
         if c.get('imma_n') is None or c.get('imma_w') is None or not mmq_takes(shape, F):
