@@ -1169,10 +1169,11 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
     for (const std::string_view chip : kHeldChips)
         if (d.chip == chip) return {};
     const auto kernels = kf::sass_arch_of(d, substituted_device_class() != nullptr);
-    std::string key = d.id() + '|' + std::to_string(d.pci_device_id) + '|' + kernels.value_or("-") + '|' +
-                      std::to_string(static_cast<int>(problem.qtype)) + '|' +
-                      std::to_string(static_cast<int>(problem.epilogue)) + '|' + std::to_string(problem.n) +
-                      '|' + std::to_string(problem.k) + '|' + std::to_string(tokens);
+    std::string key = d.id() + '|' + std::to_string(d.pci_device_id) + '|' + kernels.value_or("-") +
+                      '|' + std::to_string(static_cast<int>(problem.qtype)) + '|' +
+                      std::to_string(static_cast<int>(problem.epilogue)) + '|' +
+                      std::to_string(problem.n) + '|' + std::to_string(problem.k) + '|' +
+                      std::to_string(tokens);
     static std::mutex mu;
     static std::unordered_map<std::string, std::vector<detail::generic::Route>> memo;
     {
@@ -1182,7 +1183,8 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
     std::vector<detail::generic::Route> out;
     const auto card = card_of(d);
     if (card && kernels && *kernels == card->arch) {
-        for (const Priced& p : rank(*card, Call{problem.qtype, problem.epilogue, problem.n, problem.k, tokens})) {
+        for (const Priced& p :
+             rank(*card, Call{problem.qtype, problem.epilogue, problem.n, problem.k, tokens})) {
             if (const auto r = detail::generic::parse_route(p.route)) out.push_back(*r);
             if (p.route.rfind("rmma.", 0) == 0) break;
         }

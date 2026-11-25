@@ -869,10 +869,11 @@ void ensure_default_locked(DeviceTables& d) {
                 tables.erase(tables.begin());
                 fill_from(*nearest, tables);
                 // The analyzer's file for this board class, where tools/route_pick wrote it
-                // (routes/pick/<class>.json): its bands (T 9-32). Past kCarryDistance the bands answer ahead of the nearest
-                // table (whose answers would all be Transferred or Borrowed); within it, only the
-                // table's gaps: a problem it holds no entry of its own for, one borrowed by
-                // fill_from, or a width its own entry has no band at (#1068, table_route_answer).
+                // (routes/pick/<class>.json): its bands (T 9-32). Past kCarryDistance the bands
+                // answer ahead of the nearest table (whose answers would all be Transferred or
+                // Borrowed); within it, only the table's gaps: a problem it holds no entry of its
+                // own for, one borrowed by fill_from, or a width its own entry has no band at
+                // (#1068, table_route_answer).
                 const auto pick = path_from_utf8(dir) / "pick" /
                                   path_from_utf8(route_table_file_name(route_gpu_class()));
                 std::error_code missing;

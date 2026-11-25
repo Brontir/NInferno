@@ -170,8 +170,8 @@ int shipped_picks() {
                     held = held || ninferno::device_class().chip == c;
                 const auto routes = ninferno::ops::route_analyzer::device_routes(pr, 1);
                 failures += check(held == routes.empty(),
-                                  name + ": the analyzer " + (held ? "answers a held chip"
-                                                                   : "has no route at T 1"));
+                                  name + ": the analyzer " +
+                                      (held ? "answers a held chip" : "has no route at T 1"));
                 const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
                 failures +=
                     check(ninferno::ops::route_analyzer::device_routes(pr, 1).empty(),
@@ -266,11 +266,12 @@ int shipped_picks() {
             // The first entry's T 17-32 band widened to 40: no overlap, so the limit refuses it.
             std::regex_replace(first_text, std::regex(R"re(\[\s*17,\s*32,)re"), R"re([17, 40,)re",
                                std::regex_constants::format_first_only));
-        refused_with("with a ranked list (T 1-8 is the engine's analyzer)",
-                     std::regex_replace(first_text, std::regex(R"re("bands": \[)re"),
-                                        R"re("ranked": [[1, 1, ["rmma.m1.n1.w1x4"]]], "bands": [)re",
-                                        std::regex_constants::format_first_only),
-                     "a ranked list");
+        refused_with(
+            "with a ranked list (T 1-8 is the engine's analyzer)",
+            std::regex_replace(first_text, std::regex(R"re("bands": \[)re"),
+                               R"re("ranked": [[1, 1, ["rmma.m1.n1.w1x4"]]], "bands": [)re",
+                               std::regex_constants::format_first_only),
+            "a ranked list");
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a
