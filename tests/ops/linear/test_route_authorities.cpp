@@ -444,6 +444,8 @@ struct KnownCase {
     // When given: the evidence's kind ("measured"), or the answer it demoted under the route
     // policy ("demoted=route-table:borrowed"), checked besides the source.
     std::string_view evidence = {};
+    // When given: the route the walk took (route_name), checked besides the source and evidence.
+    std::string_view route = {};
 };
 
 std::string known_source(const KnownCase& c) {
@@ -473,8 +475,8 @@ std::string known_source(const KnownCase& c) {
     if (c.profile == 3) ops::set_route_pins({PrefillRoute::Auto, DecodeRoute::A16, MoePath::Auto});
     if (c.profile == 4) ops::set_route_pins({PrefillRoute::A16, DecodeRoute::Auto, MoePath::Auto});
     try {
-        const generic::Evidence e =
-            generic::select_answer(problem, w, c.tokens, c.prefill).evidence;
+        const generic::RouteAnswer answer = generic::select_answer(problem, w, c.tokens, c.prefill);
+        const generic::Evidence& e        = answer.evidence;
         g_reached_sources.insert(std::string(e.source));
         g_reached_kinds.insert(generic::evidence_kind_name(e.kind));
         // The same call, every authority asked on its own (the pin, the probe and the profile are
@@ -490,6 +492,7 @@ std::string known_source(const KnownCase& c) {
         } else if (!c.evidence.empty()) {
             got += std::string(" ") + generic::evidence_kind_name(e.kind);
         }
+        if (!c.route.empty()) got += " route=" + generic::route_name(answer.route);
         return got;
     } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
@@ -518,8 +521,15 @@ void check_known() {
         {"rtx4090", q4k, own, a16, 1, false, 0, "route-table", "measured"},
         {"rtx4090", q4k, big, a16, 1, false, 0, "rmma-rule", "demoted=route-table:borrowed"},
         // a decode call of a class routes/pick ranks: the analyzer's list, ahead of the table and
-        // the rules (analyzer_entry)
-        {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted"},
+        // the rules (analyzer_entry). gb202-170sm.json ranks this call at T 1 r8.w4r1, r8.w8r2,
+        // r8.w4r2, ggml_vec, rmma.m1.n1.w1x8 and at T 4 ggml_vec, rmma.m1.n1.w1x8: A16Only admits
+        // none of the A8 routes, so the walk takes the list's rmma; AllowA8 takes its head.
+        {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
+        {"rtx5090", q4k, big, a16, 4, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
+        {"rtx5090", q4k, big, LinearPolicy::AllowA8, 1, false, 0, "analyzer", "predicted",
+            "r8.w4r1"},
+        {"rtx5090", q4k, big, LinearPolicy::AllowA8, 4, false, 0, "analyzer", "predicted",
+            "ggml_vec"},
         {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},
@@ -529,9 +539,10 @@ void check_known() {
     };
     for (const KnownCase& c : cases) {
         const std::string got  = known_source(c);
-        const std::string want = c.evidence.empty()
+        std::string want       = c.evidence.empty()
                                      ? std::string(c.source)
                                      : std::string(c.source) + " " + std::string(c.evidence);
+        if (!c.route.empty()) want += " route=" + std::string(c.route);
         if (got != want) {
             fail(std::string(c.board) + " " + generic::qtype_name(c.qtype) + " " +
                  std::to_string(c.shape.n) + "x" + std::to_string(c.shape.k) +
