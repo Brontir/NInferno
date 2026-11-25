@@ -113,10 +113,15 @@ int shipped_picks() {
                                std::istreambuf_iterator<char>());
         const std::string name = f.path().filename().string();
         std::smatch m, e, r;
-        // Every file holds ranked lists (every class of an analyzer architecture); bands only the
-        // classes gen.py writes them for.
-        if (!std::regex_search(text, m, pci_re) || !std::regex_search(text, r, ranked_re)) {
-            failures += check(false, name + " names its board and has a ranked entry");
+        // Every file holds ranked lists (every class of an analyzer architecture) but a held chip's
+        // (gen.py HELD_CHIPS: AD102, #1211), which holds none; bands only the classes gen.py writes
+        // them for.
+        const bool held       = name.rfind("ad102-", 0) == 0;
+        const bool has_ranked = std::regex_search(text, r, ranked_re);
+        if (!std::regex_search(text, m, pci_re) || has_ranked == held) {
+            failures += check(false, name + (held ? " names its board and has no ranked entry (a "
+                                                    "held chip, gen.py HELD_CHIPS)"
+                                                  : " names its board and has a ranked entry"));
             continue;
         }
         const bool has_bands = std::regex_search(text, e, entry_re);
@@ -146,11 +151,13 @@ int shipped_picks() {
             const auto s = ninferno::ops::route_table_status();
             std::cout << name << " on " << ninferno::device_class().id() << ": " << s.message
                       << '\n';
-            failures += check(
-                s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
-                    s.predicted_entries > 0 && s.ranked_entries > 0 && !s.predicted_sha256.empty(),
-                name + " is read as " + ninferno::device_class().id() +
-                    "'s predicted bands and ranked lists: " + s.message);
+            failures +=
+                check(s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
+                          s.predicted_entries > 0 &&
+                          (held ? s.ranked_entries == 0 : s.ranked_entries > 0) &&
+                          !s.predicted_sha256.empty(),
+                      name + " is read as " + ninferno::device_class().id() +
+                          "'s predicted bands and ranked lists: " + s.message);
             const auto problem_of = [](const std::smatch& x) {
                 return generic::Problem{
                     ninferno::find_route(x[1].str()).value_or(ninferno::QType::BF16),
@@ -160,7 +167,7 @@ int shipped_picks() {
                     : x[2].str() == "add"  ? generic::Epilogue::AddResidual
                                            : generic::Epilogue::Store};
             };
-            {
+            if (!held) {
                 // The first ranked entry's first width lists its first route first; none under
                 // the Legacy policy.
                 const auto pr     = problem_of(r);
