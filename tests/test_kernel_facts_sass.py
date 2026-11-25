@@ -217,11 +217,22 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((counted.loops, counted.k_iter, counted.mma, counted.total),
                          (plain.loops, plain.k_iter, plain.mma, plain.total))
         self.assertGreater(counted.outside_total, 0)
-        # Without the BSSY the targets run to the function's end.
+        # Without the BSSY the targets run to the function's last unconditional EXIT: the callee
+        # after it is entered by its CALL alone.
         lines = [(o, "FMUL R36, R36, R30 ;" if o == 0x400 else t) for o, t in lines]
         body = body_of(lines)
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
-        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], body[-1][0])
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], 0x430)
+        # sm_70's out-of-line BRA.DIV stubs after that EXIT branch back into the K loop (#1226:
+        # the MoE activation switch became a BRX there): no target of the switch, so the flow is
+        # known and the loop counted as without the switch.
+        stub = [(0x530, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x540, "BRA 0x160 ;")]
+        body = body_of(lines + stub)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], 0x430)
+        stubbed = sc.loop_counts(body, tiles=2)
+        self.assertEqual((stubbed.loops, stubbed.k_iter, stubbed.mma),
+                         (plain.loops, plain.k_iter, plain.mma))
         # A switch before the K loop (the loop's back edge among its targets): unknown flow.
         early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
         body = body_of(early)
