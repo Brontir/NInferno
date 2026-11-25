@@ -712,6 +712,11 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
     // Launched as a programmatic dependent of the activation quantizer (sm_90+): the CTAs and the
     // codebook are set up under it.
     pdl::wait_for_dependencies();
+    // Then the next launch may start (its CTAs resident and its weights streaming under this one,
+    // as after rmma's wait): it waits for this kernel before it reads what this one writes, and x
+    // is complete. Without the trigger the next kernel was dispatched only after this one ended
+    // (no overlap in the graph on sm_90+, where rmma's launches overlap ~4.5 us, #1219).
+    if (threadIdx.x == 0) pdl::trigger_dependents();
     constexpr bool gated = Gated;
     const int warp   = threadIdx.x >> 5;
     const int lane   = threadIdx.x & 31;
@@ -1030,6 +1035,7 @@ __launch_bounds__(kVecMmaWarps * 32) __global__ void vec_mma_kernel(VecArgs p, i
     using Stage        = typename D::Stage;
     constexpr int kOut = Gated ? 8 : 16; // output rows a CTA
     pdl::wait_for_dependencies();
+    if (threadIdx.x == 0) pdl::trigger_dependents(); // as vec_kernel: the next launch may start
     const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
     const int g = lane >> 2, t = lane & 3;
     // A row r0 (first plane) and r1 (gated: the up row of r0, else 8 rows on).
@@ -1350,6 +1356,9 @@ __global__ void vec_quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx
     if (slice * 32 >= k) return;
     // A programmatic dependent of the kernel before it (sm_90+): only the launch overlaps.
     pdl::wait_for_dependencies();
+    // The product kernel (its dependent) may launch now and set up its CTAs and codebook; it
+    // waits for the quantized activation before it reads it.
+    if (threadIdx.x == 0) pdl::trigger_dependents();
     const std::int64_t at = std::int64_t(column) * k + 32 * slice + lane;
     const float v = __bfloat162float(x[std::int64_t(column) * ldx + 32 * slice + lane]);
     float amax    = fabsf(v);
