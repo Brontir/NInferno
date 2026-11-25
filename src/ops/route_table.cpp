@@ -479,34 +479,6 @@ void read_predicted(const std::string& path, Table& table) {
                 }
                 if (!bands.empty()) table.predicted.emplace(key, std::move(bands));
             }
-            if (e.contains("ranked")) {
-                // [[t_min, t_max, [route, ...]], ...]: a list of one route at least, cheapest
-                // first.
-                std::vector<RankedBand> lists;
-                if (!e.at("ranked").is_array() || e.at("ranked").empty()) {
-                    refuse("a ranked field that is not a list of lists", where);
-                }
-                for (const Json& b : e.at("ranked")) {
-                    if (!b.is_array() || b.size() != 3 || !b.at(2).is_array()) {
-                        refuse("a ranked list that is not [t_min, t_max, [route, ...]]", where);
-                    }
-                    RankedBand band{b.at(0).get<std::int32_t>(), b.at(1).get<std::int32_t>(), {}};
-                    for (const Json& r : b.at(2)) band.routes.push_back(require_route(r, where));
-                    if (band.routes.empty()) refuse("an empty ranked list", where);
-                    lists.push_back(std::move(band));
-                }
-                check_bands(lists, where);
-                for (const RankedBand& b : lists) {
-                    if (b.t_max > kRankedMaxTokens) {
-                        refuse("a ranked list outside T 1-" + std::to_string(kRankedMaxTokens),
-                               where);
-                    }
-                }
-                if (!lists.empty()) {
-                    table.ranked.emplace(key, std::move(lists));
-                    ++ranked;
-                }
-            }
             ++entries;
         }
         table.status.predicted_entries = entries;

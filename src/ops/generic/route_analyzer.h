@@ -106,7 +106,7 @@ struct Card {
 // the tokens.
 struct Call {
     QType qtype       = QType::BF16;
-    Epilogue epilogue = Epilogue::Store;
+    detail::generic::Epilogue epilogue = detail::generic::Epilogue::Store;
     std::int32_t n = 0, k = 0, tokens = 1;
 };
 

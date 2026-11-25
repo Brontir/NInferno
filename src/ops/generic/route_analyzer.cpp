@@ -10,6 +10,7 @@
 #include "core/mmq_columns.h"
 #include "core/sm_rate_facts.h"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_rmma_decoders.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/kernel_facts.h"
@@ -152,22 +153,22 @@ double lat_bytes(Epilogue e) { return e == Epilogue::SwiGlu ? 4.5 : 5.5; }
 // ---- the kernel-facts reads (kf_row: a loop row needs loops > 0) ----
 bool has_loop(const KernelFacts& f) { return !f.loop || f.loop->loops > 0; }
 
-double loop_i(const KernelFacts& f, int LoopCounts::* m) { return f.loop ? f.loop->*m : 0.0; }
+double loop_i(const KernelFacts& f, int LoopCounts::* m) { return f.loop ? (*f.loop).*m : 0.0; }
 
 double loop_z(const KernelFacts& f, std::size_t LoopCounts::* m) {
-    return f.loop ? static_cast<double>(f.loop->*m) : 0.0;
+    return f.loop ? static_cast<double>((*f.loop).*m) : 0.0;
 }
 
 double sched(const KernelFacts& f, int StaticSchedule::* m) {
-    return f.loop && f.loop->schedule ? f.loop->schedule->*m : 0.0;
+    return f.loop && f.loop->schedule ? (*f.loop->schedule).*m : 0.0;
 }
 
 double pipe(const KernelFacts& f, int PipeCounts::* m) {
-    return f.loop && f.loop->pipes ? f.loop->pipes->*m : 0.0;
+    return f.loop && f.loop->pipes ? (*f.loop->pipes).*m : 0.0;
 }
 
 double pro(const KernelFacts& f, int PrologueCounts::* m) {
-    return f.prologue ? f.prologue->*m : 0.0;
+    return f.prologue ? (*f.prologue).*m : 0.0;
 }
 
 std::string mma_shape(const KernelFacts& f) { return f.loop ? f.loop->mma_shape : std::string(); }
