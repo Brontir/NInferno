@@ -105,7 +105,7 @@ struct Card {
 // One call: the weight's format, the epilogue, the output rows (SwiGLU: the gate rows), K and
 // the tokens.
 struct Call {
-    QType qtype       = QType::BF16;
+    QType qtype                        = QType::BF16;
     detail::generic::Epilogue epilogue = detail::generic::Epilogue::Store;
     std::int32_t n = 0, k = 0, tokens = 1;
 };
