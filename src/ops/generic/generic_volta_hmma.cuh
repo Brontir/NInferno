@@ -451,10 +451,11 @@ struct HNV4 {
             return;
         }
         const int k0  = 256 * sb + 64 * q;
-        const auto* p = reinterpret_cast<const uint4*>(a.codes + static_cast<std::int64_t>(row) * (a.k / 2) + k0 / 2);
-        c[0]          = p[0];
-        c[1]          = p[1];
-        e             = *reinterpret_cast<const unsigned*>(a.scales + nvfp4_scale_offset(a, row, k0 / 16));
+        const auto* p = reinterpret_cast<const uint4*>(
+            a.codes + static_cast<std::int64_t>(row) * (a.k / 2) + k0 / 2);
+        c[0] = p[0];
+        c[1] = p[1];
+        e    = *reinterpret_cast<const unsigned*>(a.scales + nvfp4_scale_offset(a, row, k0 / 16));
     }
 
     __device__ __forceinline__ void clear() {
