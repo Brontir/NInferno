@@ -53,6 +53,18 @@ Tensor table(const Prepare& prepare, Id id) {
 
 Model::~Model() = default;
 
+std::uint64_t Model::device_bytes() const noexcept {
+    return backing_ ? backing_->materialized.stats().device_capacity_bytes : 0;
+}
+
+double Model::upload_seconds() const noexcept {
+    return backing_ ? backing_->materialized.stats().upload_seconds : 0;
+}
+
+std::uint64_t Model::host_to_device_bytes() const noexcept {
+    return backing_ ? backing_->materialized.stats().h2d_bytes : 0;
+}
+
 std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceContext& device) {
     artifact::Reader reader(path);
     const auto& text = loading::open_text_component(reader, "inkling2");

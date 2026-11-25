@@ -63,6 +63,11 @@ public:
 
     [[nodiscard]] const Weights& weights() const noexcept { return weights_; }
 
+    // Device bytes the prepared parameters occupy, the upload's time and its host-to-device bytes.
+    [[nodiscard]] std::uint64_t device_bytes() const noexcept;
+    [[nodiscard]] double upload_seconds() const noexcept;
+    [[nodiscard]] std::uint64_t host_to_device_bytes() const noexcept;
+
 private:
     Model() = default;
     Config config_;
