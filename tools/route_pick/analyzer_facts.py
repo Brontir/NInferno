@@ -20,7 +20,7 @@ KERNEL_FACTS = 'src/ops/generic/data/kernel_facts'
 FAMILIES = ('rmma', 'r8', 'mmq', 'vec', 'vecmma', 'vhmma', 'vgemv', 'vgemvr')
 EXTRA = dict(l1lat='l1_latency_w1', l2lat_ns='l2_latency_ns_w1', int_cyc='int32_cycles_per_warp_instruction',
              fp_cyc='fp32_cycles_per_warp_instruction', shfl='lat_shfl', smem_lat='shared_latency',
-             l1cyc='l1_ldg32_cycles_per_sm', l2bpc='l2_bytes_per_sm_clock')
+             l1cyc='l1_ldg32_cycles_per_sm', l2bpc='l2_bytes_per_sm_clock', dramlat='dram_latency_w1')
 # Probe narrow.cu (analyzer_cov/narrow/nr_l*.out, 24.11): clocks of a warp load at (4 B a lane, 4 B stride) = the issue
 # cap; a wavefront's clocks from (16, 16) over its four wavefronts; the bank width whose wavefront count matches (1, 26).
 # Equal on every card of an arch (sm_86: 3060 / 3090; sm_89: 4060 Ti / 4070 Ti / 4090; sm_120a: 5070 Ti / 5090).

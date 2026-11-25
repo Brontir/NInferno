@@ -276,7 +276,7 @@ def mmq_fixup_ns(c, P, l, j):
     return launch_ns(c, P, l['blocks'] * (MMQ_TILE // 32)) + max(bytes_ns, walk_ns)
 
 
-def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
+def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0):
     """ns of a ggml_mmq or r8 launch. ggml_mmq: waves of 128-row tiles, a unit = max(its MMA issue, its loop's stall
     clocks) + its bytes at the bus. r8: rounds of resident CTAs, a round = hypot(the warp's chain, the round's bytes /
     bus); the chain is the dp4a loop's stall clocks and a DRAM window for each global-wait generation a trip (#1207: that
@@ -285,6 +285,8 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
     pre = launch_ns(c, P, 1) + l0 + second_kernel(c, P)    # the activation pre-pass: a launch and a DRAM latency
     out = c['lat'] * _num(r['outside_stall']) / clk if r else 0.0
     if fam == 'ggml_mmq':                                  # 128-row tiles; one CTA an SM, or a tile a CTA (the fill rule)
+        # ggml_mmq.cu quantize_activation: a CTA quantizes 512 values of a column, columns x ceil(K / 512) CTAs.
+        pre = launch_ns(c, P, T * math.ceil(k / 512.0)) + l0 + second_kernel(c, P)
         nt = math.ceil(n / 128.0)
         launch = mmq_launch(n, k, int(sms), mmq_j(T), T)
         ctas = launch['blocks']
@@ -292,13 +294,19 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
         # blocks)), each set's: a launch takes as long as its longest CTA (mmq_unit.cpp launch_seconds).
         per = launch['units'] * sets / math.ceil(ctas / sms)
         cyc = c['imma_w'] if '16832' in r.get('mma_shape', '') else c['imma_n']
-        issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, _num(r['stall_sum']) / clk)
+        # The unit as mmq_unit.cpp unit_seconds: its loads (the weight tiles at the bus, or every resident CTA's tile and
+        # its j activation columns, two block_q8_1_mmq of 144 B a column, at the L2 rate) and one DRAM latency, then its
+        # chain (the loop's stall clocks and its waits on shared loads, a shared latency each); the MMA issue bounds it.
+        chain = (_num(r['stall_sum']) + _num(r.get('sb_waits_shared')) * c['smem_lat']) / clk
+        issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, chain)
         # The weights come from DRAM once over the launch (mmq_unit.cpp unit_facts_of): the row tiles' K steps spread over
         # the launch's units, at most one weight tile a resident CTA an iteration (a tile each up to the SMs, or the
         # stream-k CTAs); a tile is 128 rows x 256 values.
         resident = ctas if launch['split'] else min(launch['tiles'], int(sms))
         weight_tiles = min(resident, math.ceil(nt * max(1, math.ceil(k / 256.0)) / float(launch['units'])))
-        unit = per * (issue + 4096.0 * bits * weight_tiles / bus)
+        l2_ns = resident * (4096.0 * bits + mmq_j(T) * 288.0) / (c['l2bpc'] * resident * clk)
+        load = max(4096.0 * bits * weight_tiles / bus, l2_ns) + c['dramlat'] / clk
+        unit = per * (issue + load)
         # generic_gemm.cpp GgmlMmq: the quantizer (pre), one product launch a weight set (a gated call runs the gate's and
         # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
         # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch, and its bytes: each output reads
@@ -319,7 +327,10 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
         chain += k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
     rounds = math.ceil(ctas / slots)
     last = ctas - (rounds - 1) * slots
-    rnd = lambda nc: math.hypot(chain, nc * Wp * R * pitch / bus)
+    # A round's bytes: its weights at the bus, or its warps' activation reads (act a warp's trip, a pre-quantized call) at
+    # the L2 rate of the SMs the round fills, whichever is longer (the MMQ unit's load, mmq_unit.cpp unit_seconds).
+    rnd = lambda nc: math.hypot(chain, max(nc * Wp * R * pitch / bus,
+                                           nc * Wp * trips * act / (c['l2bpc'] * min(nc, sms) * clk)))
     return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + (rounds - 1) * rnd(slots) + rnd(last)
 
 
@@ -662,8 +673,13 @@ def _price(gpu, F, shape, route, P, issue=False):
     (fam, Wp, R), m = (route, 0, 0), _R8.match(route)
     if m:
         fam, Wp, R = 'r8', int(m.group(1)), int(m.group(2))
-        r = None if T > 8 else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=1 if T <= 1 else 2 if T <= 2 else 4 if T <= 4 else 8,
-                                      epilogue=EPI.get(ep, '0'), pre=0 if T <= 1 else 1)
+        nt = 1 if T <= 1 else 2 if T <= 2 else 4 if T <= 4 else 8
+        r = None if T > 8 else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt, epilogue=EPI.get(ep, '0'),
+                                      pre=0 if T <= 1 else 1)
+        # A pre-quantized call (T >= 2) reads its int8 activation from global, from L2 (the pre-pass wrote it): the bytes a
+        # warp's trip loads beyond the same instance quantizing into shared memory (pre 0) are the activation's.
+        r0 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt, epilogue=EPI.get(ep, '0'), pre=0) if T > 1 else None
+        act = max(_num(r['ldg_bytes']) - _num(r0['ldg_bytes']), 0.0) if r is not None and r0 is not None else 0.0
     elif route == 'ggml_mmq':
         # Rows and K in whole tiles only: on other rows the launch demotes it, on other K the selection refuses it.
         if c.get('imma_n') is None or c.get('imma_w') is None or not mmq_takes(shape, F):
@@ -681,7 +697,7 @@ def _price(gpu, F, shape, route, P, issue=False):
         return None
     if r is None:
         return None
-    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep)
+    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0)
 
 
 def candidates(gpu, F, shape):
