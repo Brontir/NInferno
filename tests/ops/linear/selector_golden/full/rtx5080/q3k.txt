@@ -305,9 +305,7 @@ q3k p1 add 4096x4096 prefill T=17..2048 ggml_mmq ws=0
 q3k p1 add 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q3k p1 add 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q3k p1 swiglu 2048x4096 speed T=1 ggml_vec ws=4608
-q3k p1 swiglu 2048x4096 speed T=2 rmma.m1.n1.w1x8 ws=0
-q3k p1 swiglu 2048x4096 speed T=3 ggml_vec ws=13824
-q3k p1 swiglu 2048x4096 speed T=4..8 rmma.m1.n1.w1x8 ws=0
+q3k p1 swiglu 2048x4096 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q3k p1 swiglu 2048x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q3k p1 swiglu 2048x4096 speed T=17..2048 ggml_mmq ws=0
 q3k p1 swiglu 2048x4096 prefill T=17..2048 ggml_mmq ws=0
@@ -515,7 +513,7 @@ q3k p1 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q3k p1 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q3k p1 swiglu 2560x17408 speed T=1 r8.w8r1 ws=0
 q3k p1 swiglu 2560x17408 speed T=2 ggml_vec ws=39168
-q3k p1 swiglu 2560x17408 speed T=3 rmma.m1.n1.w1x16 ws=0
+q3k p1 swiglu 2560x17408 speed T=3 ggml_vec ws=58752
 q3k p1 swiglu 2560x17408 speed T=4 ggml_vec ws=78336
 q3k p1 swiglu 2560x17408 speed T=5 ggml_vec ws=97920
 q3k p1 swiglu 2560x17408 speed T=8 rmma.m1.n1.w1x16 ws=0
