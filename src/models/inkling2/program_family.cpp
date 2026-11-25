@@ -270,14 +270,13 @@ program::PrefillChunkResult Inkling2Execution::prefill_text_chunk(
         auto scope          = core.work.scope();
         const Tensor normed = pass_.forward(core.work, device_ids, positions,
                                             {.kv = kv, .conv = conv, .batch = 1}, s);
-        CUDA_CHECK(cudaMemcpyAsync(hidden.data, normed.data, hidden.bytes(),
-                                   cudaMemcpyDeviceToDevice, s));
+        CUDA_CHECK(
+            cudaMemcpyAsync(hidden.data, normed.data, hidden.bytes(), cudaMemcpyDeviceToDevice, s));
     }
     const Tensor last = hidden.slice(1, t - 1, 1);
-    program::finish_prefill_text(state, call, split_frontier, last, traits_.public_tokens,
-                                 [this, s](auto& work, const Tensor& x, Tensor& logits) {
-                                     pass_.head(work, x, logits, s);
-                                 });
+    program::finish_prefill_text(
+        state, call, split_frontier, last, traits_.public_tokens,
+        [this, s](auto& work, const Tensor& x, Tensor& logits) { pass_.head(work, x, logits, s); });
     timing.begin_wait();
     core.device.synchronize();
     timing.end_wait();
@@ -307,11 +306,9 @@ StateShape state_shape(const Config& config, std::int32_t public_tokens) {
     return out;
 }
 
-std::unique_ptr<const ModelExecution> make_program_execution(const Model& model,
-                                                             DeviceContext& device,
-                                                             std::int32_t public_tokens,
-                                                             ActivationMode activations,
-                                                             EnginePurpose purpose) {
+std::unique_ptr<const ModelExecution>
+make_program_execution(const Model& model, DeviceContext& device, std::int32_t public_tokens,
+                       ActivationMode activations, EnginePurpose purpose) {
     (void)device;
     return std::make_unique<const Inkling2Execution>(model, public_tokens, activations, purpose);
 }
