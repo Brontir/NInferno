@@ -228,7 +228,10 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
     bcta = n * pitch * (1.0 + (passes - 1.0) * (1.0 - share)) / ctas       # DRAM bytes one CTA draws
     out = c['lat'] * _num(r['outside_stall']) / clk
     red = (passes - 1.0) / passes                          # the share of the work that decodes the same weights again
-    steps = 2.0 - _num(r['latency'])                       # DRAM round trips a K trip exposes, each with its share of the bytes
+    # DRAM round trips a K trip exposes, each with its share of the bytes: the latency kernel's activation ring (kAhead) or
+    # SwiGLU's staged copy (kActStage) leaves one; both need a CTA of at most eight warps (kRmmaAheadForm,
+    # rmma_stages_activations), so a wider latency kernel only unpacks late (kRaw) and exposes two like the plain one.
+    steps = 2.0 - (_num(r['latency']) if A * B <= 8 else 0.0)
     bw = _num(r['ldg_bytes']) + _num(r.get('ld_bytes')) + _num(r.get('ldgsts_bytes'))
     w_dram = steps * window(c, P, bw / steps)              # the chain's DRAM round trips
     st = _num(r['stall_sum']) / clk                        # and its issue (static stall clocks)
