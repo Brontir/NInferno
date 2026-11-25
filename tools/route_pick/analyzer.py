@@ -18,7 +18,9 @@ The price (ns):
             sm_70) or an issue bound. DRAM side = the round's bytes / bus x (rows open on the busiest SM / L1) ^ G.
   r8        launch + pre-pass + rounds; a round = hypot(the warp's chain: dp4a loop stall clocks + a DRAM window per
             global-wait generation, the quantizer's loop at T 1, the code outside; the round's bytes / bus).
-  ggml_mmq  launch + pre-pass + waves of 128-row tiles; a unit = max(its MMA issue, its loop's stall clocks) + bytes / bus.
+  ggml_mmq  launch + pre-pass + waves of 128-row tiles; a unit = max(its MMA issue, its loop's stall clocks) + bytes / bus;
+            the stream-k fixup where it runs (its launch, and its bytes at the L2 rate or its walk of L2 round trips);
+            the epilogue kernel (its launch and bytes).
   ggml_vec  two launches (quantizer, product) + L0 + rounds of the persistent grid; a round = hypot(SM side: the loop's
             chain, the issue bound and the load unit by the narrow-load rule; the round's bytes / bus).
   sm_70     every rmma.* route is the Volta substitute the launch takes (volta_hmma_takes before volta_gemv_takes),
@@ -51,7 +53,7 @@ EMU_LAT_NS = {1: 563.2, 2: 437.0, 3: 437.0, 4: 377.6}
 EMU_ISSUE = 4.0 * 1627.0 / 18.86
 PAIR = {'rmma.m1.n4.w1x8': ('q8', 'rmma.m1.n2.w1x4')}   # route: (format, the pair member its price is taken from)
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
-MMQ_FILL = 0.9                     # ggml_mmq_internal.cuh: a tile a CTA where the grid fills its last wave to 90 %
+MMQ_FILL = 0.9                     # core/mmq_columns.h launch_of: a tile a CTA where the grid fills its last wave to 90 %
 # generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
 LAT_BYTES = {'store': 5.5, 'add': 5.5, 'swiglu': 4.5}
 VEC_KS = (5120, 6144, 17408)       # ggml_vec.cu vec_launch_k: the K values with an unrolled kernel (5120 alone when gated)
@@ -131,8 +133,10 @@ def card_of(gpu, F):
 
 
 def occupancy(c, warps, regs):
-    """CTAs of a kernel one SM holds at once: its registers (a warp takes them in units of 256)."""
-    return max(float((c['regs_sm'] // (math.ceil(regs * 32.0 / 256.0) * 256)) // warps), 1.0)
+    """CTAs of a kernel one SM holds at once: its registers (a warp takes them in units of 256), its threads against the
+    SM's thread limit, and the SM's CTA limit (gpu_facts archs: max_threads_per_sm, max_blocks_per_sm)."""
+    by_regs = (c['regs_sm'] // (math.ceil(regs * 32.0 / 256.0) * 256)) // warps
+    return max(float(min(by_regs, c['thr_sm'] // (warps * 32), c['blk_sm'])), 1.0)
 
 
 def launch_ns(c, P, ctas):
@@ -214,7 +218,65 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
     return ln + rnd(occ, slots, out) + (nfull - 1.0) * rnd(occ, slots, out) + (rnd(part(tail), tail, out) if tail > 0 else 0.0)
 
 
-def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0):
+MMQ_TILE = 128                     # core/mmq_columns.h kTile: a tile's rows
+MMQ_UNIT_K = 256                   # kUnitK: a unit's K (a 32-value block format's ranges round to 8 blocks: the same)
+
+
+def mmq_launch(n, k, sms, j, T):
+    """core/mmq_columns.h launch_of, line for line: the CTAs of ggml's MMQ launch (a tile a CTA where the grid fills its
+    last wave to 90 %, else stream-k over min(SMs, work) CTAs), whether the fixup kernel runs (the CTAs do not divide the
+    tiles), and the fixup's partial tiles, split tiles and dependent rounds."""
+    tiles = math.ceil(n / float(MMQ_TILE)) * math.ceil(T / float(j))
+    steps = max(1, math.ceil(k / float(MMQ_UNIT_K)))
+    l = dict(tiles=tiles, blocks=tiles, units=steps, split=False, fixup=False, partials=0, split_tiles=0, rounds=0)
+    if sms <= 0 or tiles <= 0:
+        return l
+    waves = math.ceil(tiles / float(sms))
+    l['units'] = waves * steps
+    if 100 * tiles // (sms * waves) >= round(100 * MMQ_FILL):
+        return l
+    work = tiles * steps
+    blocks = min(sms, work)
+    l.update(blocks=blocks, units=math.ceil(work / float(blocks)), split=True, fixup=tiles % blocks != 0)
+    last = -1
+    for b in range(1, blocks):
+        end = b * work // blocks
+        if end % steps == 0:
+            continue
+        l['partials'] += 1
+        if end // steps != last:
+            l['split_tiles'] += 1
+            last = end // steps
+    tile, touching, rounds = -1, 0, 0
+    for b in range(blocks):
+        begin, end = b * work // blocks, (b + 1) * work // blocks
+        if begin == end:
+            continue
+        first, closing = begin // steps, (end - 1) // steps
+        if first == tile:
+            touching += 1
+        else:
+            rounds, tile, touching = max(rounds, touching - 1), first, 1
+        if closing != first:
+            rounds, tile, touching = max(rounds, touching - 1), closing, 1
+    l['rounds'] = max(rounds, touching - 1)
+    return l
+
+
+def mmq_fixup_ns(c, P, l, j):
+    """ns of the stream-k fixup kernel after a product (mmq_unit.cpp launch_seconds): its launch (the stream-k grid x I / 32
+    CTAs) and its work, the bytes it moves (every partial tile read, each split tile's output read and written, 128 x j
+    FP32: mmq_columns.h fixup_bytes) at the L2 rate of its working CTAs (a split tile's 128 / 32, at most the SMs), but no
+    faster than its walk (the deepest split tile's rounds + 1 L2 round trips of four warps)."""
+    if not l['fixup']:
+        return 0.0
+    ctas = min(max(l['split_tiles'] * (MMQ_TILE // 32), 1), int(c['sms']))
+    bytes_ns = (l['partials'] + 2.0 * l['split_tiles']) * MMQ_TILE * j * 4.0 / (c['l2bpc'] * ctas * c['clk'])
+    walk_ns = (l['rounds'] + 1) * c['l2trip'] / c['clk'] if l['rounds'] > 0 else 0.0
+    return launch_ns(c, P, l['blocks'] * (MMQ_TILE // 32)) + max(bytes_ns, walk_ns)
+
+
+def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
     """ns of a ggml_mmq or r8 launch. ggml_mmq: waves of 128-row tiles, a unit = max(its MMA issue, its loop's stall
     clocks) + its bytes at the bus. r8: rounds of resident CTAs, a round = hypot(the warp's chain, the round's bytes /
     bus); the chain is the dp4a loop's stall clocks and a DRAM window for each global-wait generation a trip (#1207: that
@@ -224,20 +286,19 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0):
     out = c['lat'] * _num(r['outside_stall']) / clk if r else 0.0
     if fam == 'ggml_mmq':                                  # 128-row tiles; one CTA an SM, or a tile a CTA (the fill rule)
         nt = math.ceil(n / 128.0)
-        tiles = nt * math.ceil(k / 256.0)
-        ctas = tiles if tiles < sms else nt if nt / (math.ceil(nt / sms) * sms) >= MMQ_FILL else sms
+        launch = mmq_launch(n, k, int(sms), mmq_j(T), T)
+        ctas = launch['blocks']
         per = nt * (k / 256.0) * sets * math.ceil(T / float(mmq_j(T))) / ctas
         cyc = c['imma_w'] if '16832' in r.get('mma_shape', '') else c['imma_n']
         issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, _num(r['stall_sum']) / clk)
         unit = per * (issue + 4096.0 * bits * sms / bus)
         # generic_gemm.cpp GgmlMmq: the quantizer (pre), one product launch a weight set (a gated call runs the gate's and
         # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
-        # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch).
-        epi = launch_ns(c, P, math.ceil(n / 1024.0) * T)
-        # Stream-k (core/mmq_columns.h launch_of: min(SMs, units) CTAs where a tile a CTA would not fill its last wave)
-        # adds the fixup kernel where the CTAs do not divide the output tiles (nt at T <= 8: one column tile), its grid
-        # the stream-k grid x I / 32 (ggml_mmq_internal.cuh), after each product.
-        fix = launch_ns(c, P, ctas * 4) if ctas == sms and tiles >= sms and nt % ctas != 0 else 0.0
+        # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch, and its bytes: each output reads
+        # its FP32 plane value, the up's too under SwiGLU, an added call its BF16 residual, and writes its BF16 value).
+        epi = launch_ns(c, P, math.ceil(n / 1024.0) * T) + n * T * (4.0 * sets + 2.0 + (2.0 if ep == 'add' else 0.0)) / bus
+        # Stream-k adds the fixup kernel after each product where the CTAs do not divide the output tiles (mmq_launch).
+        fix = mmq_fixup_ns(c, P, launch, mmq_j(T))
         return pre + sets * (launch_ns(c, P, ctas) + fix + math.ceil(ctas / sms) * (unit / sets + out)) + epi
     ctas = math.ceil(n / float(Wp * R))                    # r8
     slots = sms * occupancy(c, Wp, _num(r['registers']))
@@ -612,7 +673,7 @@ def _price(gpu, F, shape, route, P, issue=False):
         return None
     if r is None:
         return None
-    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R)
+    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep)
 
 
 def candidates(gpu, F, shape):
