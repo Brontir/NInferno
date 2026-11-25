@@ -63,8 +63,8 @@ r = clip(rel_clip * (Wr h_q), 8)                              [24 x 16]
 full layers: q *= tau(p), r *= tau(p)
 t = Ws h_q                                                    [24] sink logits
 
-s_ij = (q_i . k_j + r_i . B[:, min(p_i - p_j, extent)]) / sqrt(128)   (B[:, extent] = 0)
-o_i  = sum_j exp(s_ij) v_j / (exp(t_i / sqrt(128)) + sum_j exp(s_ij))  (causal; sliding: p_i - p_j < 1024)
+s_ij = q_i . k_j / sqrt(128) + r_i . B[:, min(p_i - p_j, extent)]   (B[:, extent] = 0; the bias is not scaled)
+o_i  = sum_j exp(s_ij) v_j / (exp(t_i) + sum_j exp(s_ij))  (causal; sliding: p_i - p_j < 1024)
 a    = conv(Wo (o * sigmoid(Wg h_q)), attn_post_conv, none)
 
 if layer % 6 == 0: blocks.append(cur); x = a        # a block starts a new residual stream

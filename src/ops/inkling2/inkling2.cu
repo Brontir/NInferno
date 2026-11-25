@@ -263,8 +263,8 @@ __global__ void attention_kernel(AttnParams p) {
         const int i = lane + 32 * j;
         qv[j]       = i < p.d ? __bfloat162float(q[i]) * sc : 0.0F;
     }
-    const float rv =
-        lane < p.dr ? __bfloat162float(r[lane]) * sc : 0.0F; // the scale covers the bias too
+    // The bias and the sink join the mask, after the scale (llama.cpp folds them into kq_mask).
+    const float rv = lane < p.dr ? __bfloat162float(r[lane]) : 0.0F;
     float m = -INFINITY, z = 0;
     const std::int64_t plane = static_cast<std::int64_t>(g) * p.capacity * p.d;
     for (int key = low + warp; key <= pos; key += kAttnWarps) {
@@ -296,7 +296,7 @@ __global__ void attention_kernel(AttnParams p) {
     }
     __syncthreads();
     if (warp != 0) { return; }
-    const float sink = __bfloat162float(p.sink[static_cast<std::int64_t>(t) * p.q_heads + h]) * sc;
+    const float sink = __bfloat162float(p.sink[static_cast<std::int64_t>(t) * p.q_heads + h]);
     float mt         = sink;
     for (int w = 0; w < kAttnWarps; ++w) { mt = fmaxf(mt, sm[w]); }
     float zt = expf(sink - mt);

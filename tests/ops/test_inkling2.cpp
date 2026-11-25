@@ -299,16 +299,17 @@ int attention_case(int window, int extent, std::uint32_t seed) {
                     dot += double(q[(std::size_t(t) * hq + h) * d + i]) *
                            k[(std::size_t(j) * hkv + g) * d + i];
                 }
+                dot *= sc;
                 if (p - j < extent) {
                     for (int i = 0; i < dr; ++i) {
                         dot += double(r[(std::size_t(t) * hq + h) * dr + i]) *
                                bias[std::size_t(p - j) * dr + i];
                     }
                 }
-                s.push_back(dot * sc);
+                s.push_back(dot);
                 js.push_back(j);
             }
-            const double sk = sink[std::size_t(t) * hq + h] * sc;
+            const double sk = sink[std::size_t(t) * hq + h];
             double m        = sk;
             for (double x : s) { m = std::max(m, x); }
             double z = std::exp(sk - m);

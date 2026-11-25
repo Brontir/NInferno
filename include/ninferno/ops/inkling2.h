@@ -105,11 +105,11 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
 /**
  * Op: causal attention with a learned relative-position bias and a per-query sink.
  *
- *   s_ij   = (q_i . k_j + r_i . bias[min(p_i - p_j, extent), :]) / sqrt(D)   (bias row extent = 0)
- *   o_i    = sum_j exp(s_ij) v_j / (exp(sink_i / sqrt(D)) + sum_j exp(s_ij))
+ *   s_ij   = q_i . k_j / sqrt(D) + r_i . bias[min(p_i - p_j, extent), :]   (bias row extent = 0)
+ *   o_i    = sum_j exp(s_ij) v_j / (exp(sink_i) + sum_j exp(s_ij))
  *
- * (llama.cpp adds the bias and the negated sink to q.k and scales the sum, beside a zero sink:
- * build_attn_mha's soft_max_ext with kq_b and soft_max_add_sinks.)
+ * (llama.cpp's build_attn_rel_pos folds the bias minus the sink into the mask, which the softmax
+ * adds after the scale, beside a zero sink.)
  *
  * over the keys j with 0 <= p_i - p_j (and p_i - p_j < window on a sliding layer), for every head
  * h with its key head h / (Hq / Hkv). q: BF16 [D, Hq, T] (prepared), r: BF16 [Dr, Hq, T],
