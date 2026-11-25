@@ -606,7 +606,10 @@ void register_plan_workspace_queries() {
             const auto text       = directory.components.find("text");
             if (text == directory.components.end()) { return std::nullopt; }
             const std::string type = text->second.config.value("model_type", std::string());
-            if (hf_decoder_family(type)) { return hf_public_token_count(reader); }
+            // Inkling 2's start reads the HF text frontend too (inkling2_family.cpp).
+            if (hf_decoder_family(type) || type == "inkling2_text") {
+                return hf_public_token_count(reader);
+            }
             return models::qwen3_5::public_token_count(reader);
         } catch (const std::exception&) { return std::nullopt; }
     });
