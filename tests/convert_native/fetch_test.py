@@ -620,12 +620,20 @@ def main() -> int:
             gguf_foreign, _, _ = synthetic_gguf.qwen_case(work / "qwen-src5", False, None, 34, rebuilt=True,
                                                           base_model="https://huggingface.co/org/qwen-base")
             foreign = json.dumps({"model": {"vocab": {f"x{i}": i for i in range(8)}}, "added_tokens": []}).encode()
-            hub.add_repo("org/qwen-gguf5", {"model-Q8_0.gguf": gguf_foreign.read_bytes(), "tokenizer.json": foreign})
+            hub.add_repo("org/qwen-gguf5", {"model-Q8_0.gguf": gguf_foreign.read_bytes(), "tokenizer.json": foreign,
+                                            "chat_template.jinja": b"{{ 'another model' }}"})
             beside = subprocess.run([str(native), "--fetch", "org/qwen-gguf5", "--cache", str(work / "cache-e2e")],
                                     cwd=repository, capture_output=True, text=True, env=environment)
-            case("another model's tokenizer.json beside the GGUF: the base gives both (#1218)",
+            beside_out = (work / "cache-e2e" / "models--org--qwen-gguf5" / "ninferno" /
+                          "c0ffee0123456789abcdef0123456789abcdef01" / "model-Q8_0.qwen3_5_bf16.ninferno")
+            beside_report = (json.loads(Path(str(beside_out) + ".conversion.json").read_text(encoding="utf-8"))
+                             if beside_out.exists() else {})
+            beside_notes = " ".join(beside_report.get("resource_notes", []))
+            case("another model's files beside the GGUF: the base gives the tokenizer pair, the GGUF the "
+                 "template (#1218)",
                  beside.returncode == 0
-                 and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in beside.stdout)
+                 and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in beside.stdout
+                 and "chat_template.jinja: rebuilt" in beside_notes)
             if beside.returncode:
                 errors.append(beside.stderr[-1500:])
 

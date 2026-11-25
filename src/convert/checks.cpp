@@ -313,12 +313,11 @@ void load_resources(Model& model, const std::filesystem::path& root, std::uint64
     // A GGUF rebuilds its tokenizer files from its own metadata; files of the same names beside it
     // are read in their place only when they are this model's. A directory that keeps several
     // models' files (a downloads folder) can hold another model's tokenizer.json: its vocabulary
-    // differs from the GGUF's, and then the rebuilt files win.
+    // differs from the GGUF's, and then the rebuilt files win (an override still wins its own role:
+    // the base model's tokenizer files that acquire.cpp names in that case, #1218).
     bool foreign_beside = false;
     if (const auto rebuilt = fallbacks.find("tokenizer.json");
-        rebuilt != fallbacks.end() && std::filesystem::exists(root / "tokenizer.json") &&
-        std::none_of(overrides.begin(), overrides.end(),
-                     [](const auto& o) { return o.first == "tokenizer.json"; })) {
+        rebuilt != fallbacks.end() && std::filesystem::exists(root / "tokenizer.json")) {
         std::string beside, own;
         try {
             beside = spec::vocab_fingerprint_file(root / "tokenizer.json").value;
