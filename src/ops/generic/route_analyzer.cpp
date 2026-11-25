@@ -1176,7 +1176,9 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
     if (!format_row(problem.qtype)) return {};
     // The analyzer prices A16 calls (the exam grids'); an A4 call (NVFP4 under --activations a4)
     // keeps its measured A4 bands and the rules.
-    if (detail::generic::compute_class(problem.qtype, problem.policy) != detail::generic::ComputeClass::A16) return {};
+    if (detail::generic::compute_class(problem.qtype, problem.policy) !=
+        detail::generic::ComputeClass::A16)
+        return {};
     const DeviceClass* dp = nullptr;
     try {
         dp = &device_class();
@@ -1194,13 +1196,12 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
     const auto kernels = kf::sass_arch_of(d, substituted_device_class() != nullptr);
     // Keyed by every number the price reads of the board (its SMs, clock and bus), not its name:
     // two classes of one chip and SM count on other clocks or memory price apart.
-    std::string key = d.id() + '|' + std::to_string(d.sms) + '|' +
-                      std::to_string(d.facts.reference_clock_khz) + '|' +
-                      std::to_string(d.facts.dram_gbps()) + '|' + kernels.value_or("-") + '|' +
-                      std::to_string(static_cast<int>(problem.qtype)) + '|' +
-                      std::to_string(static_cast<int>(problem.epilogue)) + '|' +
-                      std::to_string(problem.n) + '|' + std::to_string(problem.k) + '|' +
-                      std::to_string(tokens);
+    std::string key =
+        d.id() + '|' + std::to_string(d.sms) + '|' + std::to_string(d.facts.reference_clock_khz) +
+        '|' + std::to_string(d.facts.dram_gbps()) + '|' + kernels.value_or("-") + '|' +
+        std::to_string(static_cast<int>(problem.qtype)) + '|' +
+        std::to_string(static_cast<int>(problem.epilogue)) + '|' + std::to_string(problem.n) + '|' +
+        std::to_string(problem.k) + '|' + std::to_string(tokens);
     static std::mutex mu;
     static std::unordered_map<std::string, std::vector<detail::generic::Route>> memo;
     {

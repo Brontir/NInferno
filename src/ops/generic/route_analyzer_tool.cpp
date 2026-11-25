@@ -65,13 +65,12 @@ int route_analyzer_main(int argc, char** argv) {
         }
         const std::string head = pci + ' ' + fmt + ' ' + ep + ' ' + std::to_string(n) + ' ' +
                                  std::to_string(k) + ' ' + std::to_string(T);
-        const auto q = ra::format_of_name(fmt);
-        const GpuFactsRow* row =
-            find_gpu_facts(pci_of(pci));
-        const auto card  = row ? ra::card_of(*row) : std::nullopt;
-        const Epilogue e = ep == "swiglu" ? Epilogue::SwiGlu
-                           : ep == "add"  ? Epilogue::AddResidual
-                                          : Epilogue::Store;
+        const auto q           = ra::format_of_name(fmt);
+        const GpuFactsRow* row = find_gpu_facts(pci_of(pci));
+        const auto card        = row ? ra::card_of(*row) : std::nullopt;
+        const Epilogue e       = ep == "swiglu" ? Epilogue::SwiGlu
+                                 : ep == "add"  ? Epilogue::AddResidual
+                                                : Epilogue::Store;
         if (!q || !card || (ep != "store" && ep != "add" && ep != "swiglu")) {
             std::cout << head << " - -\n";
             continue;
