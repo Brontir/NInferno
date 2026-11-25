@@ -9,6 +9,8 @@
 #include "ninferno/ops/rmsnorm.h"
 #include "ninferno/ops/sigmoid_mul.h"
 
+#include <cuda_bf16.h>
+
 #include <algorithm>
 #include <stdexcept>
 #include <string>
