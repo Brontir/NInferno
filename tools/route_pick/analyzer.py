@@ -80,6 +80,11 @@ RMMA_DEC = {f: v[1] for f, v in FORMATS.items()}
 R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
 # The blocks a lane's group spans (generic_w4a8.cuh: kSpan x kStride of the codec; 1 where it has neither).
 R8_GROUP = {'W4a8Q45K': 2, 'W4a8Q6K': 4, 'W4a8Q3K': 4, 'W4a8Q2K': 4}
+# generic_w4a8.cuh: the codecs whose blocks carry a min term (kMin: the activation's block sums travel with it) and the
+# codebook codecs' grid words (kGridWords), which r8_kernel stages in shared memory below sm_80.
+R8_SUMS = ('W4a8Q45K<4>', 'W4a8Q45K<5>', 'W4a8Ggml32<1>', 'W4a8Ggml32<3>')
+R8_GRID_WORDS = {'W4a8Iq3Xxs': 256, 'W4a8Iq3S': 512, 'W4a8Iq1S': 2048, 'W4a8Iq1M': 2048, 'W4a8Iq2Xxs': 512,
+                 'W4a8Iq2Xs': 1024, 'W4a8Iq2S': 2048}
 MMQ_TYPE = {f: v[3] for f, v in FORMATS.items() if v[3]}
 EPI = {'store': '0', 'add': '1', 'swiglu': '2'}   # the kernel facts' epilogue column
 _RMMA = re.compile(r'rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?$')
@@ -134,11 +139,16 @@ def card_of(gpu, F):
     return cache[key]
 
 
-def occupancy(c, warps, regs):
+def occupancy(c, warps, regs, smem=0.0):
     """CTAs of a kernel one SM holds at once: its registers (a warp takes them in units of 256), its threads against the
-    SM's thread limit, and the SM's CTA limit (gpu_facts archs: max_threads_per_sm, max_blocks_per_sm)."""
+    SM's thread limit, the SM's CTA limit (gpu_facts archs: max_threads_per_sm, max_blocks_per_sm) and, for a kernel with
+    dynamic shared memory, its bytes and the driver's reserved bytes a CTA against the SM's shared memory
+    (smem_per_sm_kib, smem_reserved_per_block)."""
     by_regs = (c['regs_sm'] // (math.ceil(regs * 32.0 / 256.0) * 256)) // warps
-    return max(float(min(by_regs, c['thr_sm'] // (warps * 32), c['blk_sm'])), 1.0)
+    lim = min(by_regs, c['thr_sm'] // (warps * 32), c['blk_sm'])
+    if smem > 0:
+        lim = min(lim, c['smem_sm'] // (smem + c['smem_res']))
+    return max(float(lim), 1.0)
 
 
 def launch_ns(c, P, ctas):
@@ -278,7 +288,7 @@ def mmq_fixup_ns(c, P, l, j):
     return launch_ns(c, P, l['blocks'] * (MMQ_TILE // 32)) + max(bytes_ns, walk_ns)
 
 
-def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0):
+def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0, smem=0.0):
     """ns of a ggml_mmq or r8 launch. ggml_mmq: waves of 128-row tiles, a unit = max(its MMA issue, its loop's stall
     clocks) + its bytes at the bus. r8: rounds of resident CTAs, a round = hypot(the warp's chain, the round's bytes /
     bus); the chain is the dp4a loop's stall clocks and a DRAM window for each global-wait generation a trip (#1207: that
@@ -329,7 +339,7 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
         fix = mmq_fixup_ns(c, P, launch, mmq_j(T))
         return pre + sets * (launch_ns(c, P, ctas) + fix + math.ceil(ctas / sms) * (unit / sets + out)) + epi
     ctas = math.ceil(n / float(Wp * R))                    # r8
-    slots = sms * occupancy(c, Wp, _num(r['registers']))
+    slots = sms * occupancy(c, Wp, _num(r['registers']), smem)
     trips = k / max(_num(r['k_iter']), 1.0)
     gw = _num(r.get('glb_waits'))
     trip = _num(r['stall_sum']) / clk + gw * window(c, P, _num(r['ldg_bytes']) / max(gw, 1.0))
@@ -680,6 +690,8 @@ def _price(gpu, F, shape, route, P, issue=False):
         return volta_sub_price(c, P, n, k, T, bits, sets, fmt, ep, volta_takes(fmt, k, T))
     if m:
         M, N, A, B, C = (int(x or 1) for x in m.groups())
+        if C > 1 and c['cc'] < 90:                          # a cluster schedule needs thread-block clusters (sm_90+)
+            return None
         key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=0)
         r = kf_row(kf, 'rmma', latency=0, **key)
         if r is not None and N == 1 and c['bpc'] >= LAT_BYTES.get(ep, 5.5) and c['cc'] >= 75:
@@ -715,6 +727,13 @@ def _price(gpu, F, shape, route, P, issue=False):
             grp = R8_GROUP.get(str(R8_CODEC.get(fmt)).split('<')[0], 1)
             lines = min(32.0, 8.0 * grp)                                  # 32 lanes x 16 B at a 32 x grp B stride
             act = codes * lines + (n_add - codes) * min(float(grp), 32.0)    # L1 tag requests a warp's trip
+        # Its dynamic shared memory (generic_r8.cuh r8_launch_tokens): at T 1 the CTA's quantized activation
+        # (r8_smem_bytes: K / 32 blocks of 36 B, 40 with the block sums of a codec with a min), 8-byte aligned; below
+        # sm_80 (no native BF16 MMA, r8_stage_grid) a codebook codec's grid, 4 B a word and r8_grid_pad.
+        codec = str(R8_CODEC.get(fmt))
+        smem = (math.ceil(k / 32.0 * (40.0 if codec in R8_SUMS else 36.0) / 8.0) * 8.0) if T <= 1 else 0.0
+        if c['cc'] < 80 and R8_GRID_WORDS.get(codec, 0):
+            smem += 4.0 * R8_GRID_WORDS[codec] + 4.0
     elif route == 'ggml_mmq':
         # Rows and K in whole tiles only: on other rows the launch demotes it, on other K the selection refuses it.
         if c.get('imma_n') is None or c.get('imma_w') is None or not mmq_takes(shape, F):
@@ -734,7 +753,7 @@ def _price(gpu, F, shape, route, P, issue=False):
         return None
     if r is None:
         return None
-    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0)
+    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0, smem if fam == 'r8' else 0.0)
 
 
 def candidates(gpu, F, shape):
