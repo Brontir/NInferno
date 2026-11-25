@@ -9,6 +9,7 @@
 #include "core/device.h"
 #include "core/tensor.h"
 #include "models/inkling2/model.h"
+#include "ninferno/ops/inkling2.h"
 
 #include <cuda_runtime.h>
 
@@ -47,7 +48,7 @@ private:
         std::int32_t capacity = 0;
     };
 
-    Tensor state(std::int32_t slot, std::int32_t offset, std::int32_t channels);
+    ops::Inkling2ConvState state(std::int32_t slot, std::int32_t offset);
     Tensor stream_buffer(); // a fresh [H, max_tokens] BF16 buffer of the pool, for blocks
 
     const Model& model_;

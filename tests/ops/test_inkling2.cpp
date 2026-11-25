@@ -90,6 +90,59 @@ int depth_mix_case(int hidden, int tokens, int count, int queries, std::uint32_t
 }
 
 // Two calls in a row (the state carries the last three inputs from the first into the second).
+// Two sequences of two tokens in one call, their state planes in slots 1 and 0 of a two-slot
+// buffer (Inkling2ConvState::slots), dynamic taps: each row as its own one-sequence call.
+int conv_batch_case(int channels, int heads, std::uint32_t seed) {
+    const int tokens = 2, batch = 2;
+    auto weight = std::vector<float>(std::size_t(channels) * 4);
+    fill_uniform(weight, seed, -0.8f, 0.8f);
+    std::vector<float> state(std::size_t(channels) * 3 * batch);
+    fill_uniform(state, seed + 1, -1.0f, 1.0f);
+    auto x    = bf16_values(std::size_t(channels) * tokens * batch, seed + 2, -2.0f, 2.0f);
+    auto taps = bf16_values(std::size_t(heads) * 4 * tokens * batch, seed + 3, -0.5f, 0.5f);
+    auto dw = to_device_f32(weight), dstate = to_device_f32(state), dx = to_device_bf16(x),
+         dt = to_device_bf16(taps), dslots = to_device_i32(std::vector<int>{1, 0});
+    DeviceBuffer dout(std::size_t(channels) * tokens * batch * 2);
+    Tensor tx(dx.p, DType::BF16, {channels, tokens, batch}), tw(dw.p, DType::FP32, {4, channels});
+    Tensor tt(dt.p, DType::BF16, {heads * 4, tokens, batch});
+    Tensor to(dout.p, DType::BF16, {channels, tokens, batch});
+    const ops::Inkling2ConvState ts{static_cast<float*>(dstate.p), std::int64_t(channels) * 3,
+                                    static_cast<const std::int32_t*>(dslots.p)};
+    ops::inkling2_conv(tx, tw, tt, heads, ts, to, nullptr);
+    cuda_synchronize();
+    const double scale = 1.0 / std::sqrt(9.0);
+    std::vector<double> expected(x.size()), history(state.size());
+    for (int b = 0; b < batch; ++b) {
+        const std::size_t slot = b == 0 ? 1 : 0;
+        for (int c = 0; c < channels; ++c) {
+            const std::size_t at = slot * channels * 3 + std::size_t(c) * 3;
+            std::vector<double> u(state.begin() + std::ptrdiff_t(at),
+                                  state.begin() + std::ptrdiff_t(at) + 3);
+            for (int t = 0; t < tokens; ++t) {
+                u.push_back(x[(std::size_t(b) * tokens + t) * channels + c]);
+            }
+            const int head = c / (channels / heads);
+            for (int t = 0; t < tokens; ++t) {
+                const std::size_t i = std::size_t(t) + 3, col = std::size_t(b) * tokens + t;
+                double y            = u[i];
+                for (int k = 0; k < 4; ++k) {
+                    y += weight[std::size_t(c) * 4 + k] * u[i - 3 + std::size_t(k)];
+                }
+                for (int lag = 0; lag < 4; ++lag) {
+                    y += taps[col * heads * 4 + std::size_t(head) * 4 + lag] *
+                         u[i - std::size_t(lag)];
+                }
+                expected[col * channels + c] = y * scale;
+            }
+            for (int j = 0; j < 3; ++j) { history[at + j] = u[u.size() - 3 + std::size_t(j)]; }
+        }
+    }
+    return verify_pointwise("inkling2_conv batch", from_device_bf16(dout, expected.size()),
+                            expected, kBf16Out) +
+           verify_pointwise("inkling2_conv batch state", from_device_f32(dstate, history.size()),
+                            history, {1e-6, 1e-6});
+}
+
 int conv_case(int channels, int heads, bool dynamic, std::uint32_t seed) {
     auto weight = std::vector<float>(std::size_t(channels) * 4);
     fill_uniform(weight, seed, -0.8f, 0.8f);
@@ -110,7 +163,7 @@ int conv_case(int channels, int heads, bool dynamic, std::uint32_t seed) {
         Tensor tx(device_x.p, DType::BF16, {channels, tokens});
         Tensor tw(device_weight.p, DType::FP32, {4, channels});
         Tensor tt = dynamic ? Tensor(device_taps.p, DType::BF16, {heads * 4, tokens}) : Tensor();
-        Tensor ts(device_state.p, DType::FP32, {3, channels});
+        const ops::Inkling2ConvState ts{static_cast<float*>(device_state.p), 0, nullptr};
         Tensor to(device_out.p, DType::BF16, {channels, tokens});
         ops::inkling2_conv(tx, tw, tt, heads, ts, to, nullptr);
         cuda_synchronize();
@@ -394,6 +447,7 @@ int main() {
     failures += conv_case(1024, 8, false, 41u);
     failures += conv_case(1024, 8, true, 51u);
     failures += conv_case(2304, 1, false, 61u);
+    failures += conv_batch_case(1024, 8, 65u);
     failures += control_case(2304, 3, 71u);
     failures += prepare_case(true, 81u);
     failures += prepare_case(false, 91u);

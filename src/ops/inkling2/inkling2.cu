@@ -125,11 +125,15 @@ __global__ void depth_mix_kernel(MixParams p) {
 constexpr int kConvThreads = 256;
 
 __global__ void conv_kernel(const __nv_bfloat16* x, const float* w, const __nv_bfloat16* taps,
-                            int heads, float* state, __nv_bfloat16* out, int channels, int tokens,
-                            float scale) {
-    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+                            int heads, Inkling2ConvState st, __nv_bfloat16* out, int channels,
+                            int tokens, float scale) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x, b = blockIdx.y;
     if (c >= channels) { return; }
     const int head = taps ? c / (channels / heads) : 0;
+    float* state   = st.data + (st.slots ? st.slots[b] : b) * st.slot_stride;
+    x += static_cast<std::int64_t>(b) * tokens * channels;
+    out += static_cast<std::int64_t>(b) * tokens * channels;
+    if (taps) { taps += static_cast<std::int64_t>(b) * tokens * heads * 4; }
     float u0 = state[c * 3 + 0], u1 = state[c * 3 + 1],
           u2       = state[c * 3 + 2]; // u[t-3], u[t-2], u[t-1]
     const float w0 = w[c * 4 + 0], w1 = w[c * 4 + 1], w2 = w[c * 4 + 2], w3 = w[c * 4 + 3];
@@ -352,28 +356,31 @@ void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, st
 }
 
 void inkling2_conv(const Tensor& x, const Tensor& weight, const Tensor& taps, std::int32_t heads,
-                   Tensor& state, Tensor& out, cudaStream_t stream) {
+                   const Inkling2ConvState& state, Tensor& out, cudaStream_t stream) {
     const char* op = "inkling2_conv";
     need_bf16(x, op, "x");
     need_bf16(out, op, "out");
     need_f32(weight, op, "weight");
-    need_f32(state, op, "state");
-    const int channels = x.ne[0], tokens = x.ne[1];
-    need(weight.ne[0] == 4 && weight.ne[1] == channels && state.ne[0] == 3 &&
-             state.ne[1] == channels && out.ne[0] == channels && out.ne[1] == tokens,
-         op, "weight [C, 4], state [C, 3], out [C, T]");
+    const int channels = x.ne[0], tokens = x.ne[1], batch = x.ne[2];
+    need(state.data != nullptr && (batch == 1 || state.slots || state.slot_stride >= 3 * channels),
+         op, "a state plane for every batch row");
+    need(weight.ne[0] == 4 && weight.ne[1] == channels && out.ne[0] == channels &&
+             out.ne[1] == tokens && out.ne[2] == batch && x.ne[3] == 1,
+         op, "weight [C, 4], x and out [C, T, B]");
     const bool dynamic = taps.data != nullptr;
     if (dynamic) {
         need_bf16(taps, op, "taps");
-        need(heads >= 1 && channels % heads == 0 && taps.ne[0] == heads * 4 && taps.ne[1] == tokens,
-             op, "taps must be [heads * 4, T] with C % heads == 0");
+        need(heads >= 1 && channels % heads == 0 && taps.ne[0] == heads * 4 &&
+                 taps.ne[1] == tokens && taps.ne[2] == batch,
+             op, "taps must be [heads * 4, T, B] with C % heads == 0");
     }
     const float scale = 1.0F / std::sqrt(4.0F * (dynamic ? 2.0F : 1.0F) + 1.0F);
-    conv_kernel<<<(channels + kConvThreads - 1) / kConvThreads, kConvThreads, 0, stream>>>(
-        static_cast<const __nv_bfloat16*>(x.data), static_cast<const float*>(weight.data),
-        dynamic ? static_cast<const __nv_bfloat16*>(taps.data) : nullptr, dynamic ? heads : 1,
-        static_cast<float*>(state.data), static_cast<__nv_bfloat16*>(out.data), channels, tokens,
-        scale);
+    conv_kernel<<<dim3((channels + kConvThreads - 1) / kConvThreads, batch), kConvThreads, 0,
+                  stream>>>(static_cast<const __nv_bfloat16*>(x.data),
+                            static_cast<const float*>(weight.data),
+                            dynamic ? static_cast<const __nv_bfloat16*>(taps.data) : nullptr,
+                            dynamic ? heads : 1, state, static_cast<__nv_bfloat16*>(out.data),
+                            channels, tokens, scale);
     CUDA_CHECK(cudaGetLastError());
 }
 

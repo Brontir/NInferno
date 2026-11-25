@@ -57,12 +57,20 @@ void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, st
  *
  * and the state becomes the last three u of the call: state[c, j] = u[c, T - 3 + j].
  *
- * x, out: contiguous BF16 [C, T] (out may alias x exactly). weight: contiguous FP32 [C, 4].
- * taps: empty, or contiguous BF16 [heads * 4, T] (a dynamic tap per head and token; C % heads ==
- * 0). state: contiguous FP32 [C, 3], read and replaced. One sequence; T >= 1.
+ * x, out: contiguous BF16 [C, T, B] (out may alias x exactly): B sequences of T tokens each.
+ * weight: contiguous FP32 [C, 4]. taps: empty, or contiguous BF16 [heads * 4, T, B] (a dynamic tap
+ * per head and token; C % heads == 0). The state of batch row b is the FP32 [C, 3] plane at
+ * state.data + slot_b * state.slot_stride, slot_b = state.slots[b] (device I32 [B]; null: b),
+ * read and replaced; the rows' planes are distinct. T >= 1.
  */
+struct Inkling2ConvState {
+    float* data                = nullptr;
+    std::int64_t slot_stride   = 0; // elements between two slots' planes
+    const std::int32_t* slots  = nullptr;
+};
+
 void inkling2_conv(const Tensor& x, const Tensor& weight, const Tensor& taps, std::int32_t heads,
-                   Tensor& state, Tensor& out, cudaStream_t stream);
+                   const Inkling2ConvState& state, Tensor& out, cudaStream_t stream);
 
 /**
  * Op: loop controller update (graph::control), the elementwise half after the low-rank pair.

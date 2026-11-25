@@ -74,10 +74,9 @@ void Target::reset() {
     position_ = 0;
 }
 
-Tensor Target::state(std::int32_t slot, std::int32_t offset, std::int32_t channels) {
+ops::Inkling2ConvState Target::state(std::int32_t slot, std::int32_t offset) {
     auto& s = slots_[static_cast<std::size_t>(slot)];
-    return Tensor(static_cast<float*>(s.conv.p) + std::size_t(offset) * 3, DType::FP32,
-                  {3, channels});
+    return {static_cast<float*>(s.conv.p) + std::size_t(offset) * 3, 0, nullptr};
 }
 
 Tensor Target::stream_buffer() {
@@ -229,7 +228,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
             project(hv, L.value_taps, vtaps, work_, s);
         }
         {
-            Tensor ks = state(v.slot, 0, KV), vs = state(v.slot, KV, KV);
+            const auto ks = state(v.slot, 0), vs = state(v.slot, KV);
             ops::inkling2_conv(k, L.key_conv, ktaps, Hkv, ks, k, s);
             ops::inkling2_conv(vv, L.value_conv, vtaps, Hkv, vs, vv, s);
         }
@@ -261,7 +260,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         project(context, L.output, attn, work_, s);
         see("node_84", attn);
         {
-            Tensor os = state(v.slot, 2 * KV, H);
+            const auto os = state(v.slot, 2 * KV);
             ops::inkling2_conv(attn, L.output_conv, Tensor(), 1, os, attn, s);
         }
         see("ffn_inp-0", attn);
@@ -295,7 +294,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         }
         see("ffn_moe_out-0", y);
         {
-            Tensor fs = state(v.slot, 2 * KV + H, H);
+            const auto fs = state(v.slot, 2 * KV + H);
             ops::inkling2_conv(y, L.ffn_conv, Tensor(), 1, fs, y, s);
         }
         Tensor out = fresh();
