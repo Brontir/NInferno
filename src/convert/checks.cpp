@@ -341,7 +341,9 @@ void load_resources(Model& model, const std::filesystem::path& root, std::uint64
     if (!foreign_beside && fallbacks.contains("tokenizer.json") &&
         fallbacks.contains("tokenizer_config.json")) {
         bool overridden_pair = false;
-        for (const auto& [name, _] : overrides) { overridden_pair = overridden_pair || is_pair(name); }
+        for (const auto& [name, _] : overrides) {
+            overridden_pair = overridden_pair || is_pair(name);
+        }
         const bool json   = std::filesystem::exists(root / "tokenizer.json");
         const bool config = std::filesystem::exists(root / "tokenizer_config.json");
         if (!overridden_pair && json != config) {
