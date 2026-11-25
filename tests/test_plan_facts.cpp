@@ -1014,7 +1014,7 @@ int inkling2() {
                      {"inkling2.loop.start", 6},
                      {"inkling2.loop.end", 18},
                      {"inkling2.loop.count", 3}};
-    const auto g = pr::plan_facts_of_gguf_metadata(md, 1);
+    const auto g  = pr::plan_facts_of_gguf_metadata(md, 1);
     failures += same(g.model.offline_reason, std::string(), "inkling2 gguf plans");
     failures += same(g.model.state.full_layers, 8U, "inkling2 gguf full visits");
     failures += same(g.model.state.sliding_layers, 40U, "inkling2 gguf sliding visits");
