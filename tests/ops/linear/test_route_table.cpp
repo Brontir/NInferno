@@ -142,7 +142,8 @@ int shipped_picks() {
              it != std::sregex_iterator() && entry_count < 2; ++it) {
             ++entry_count;
         }
-        if (entry_count >= 2 && (first_name.empty() || name < first_name)) {
+        // The refusals below edit a ranked entry: a held chip's file has none.
+        if (!held && entry_count >= 2 && (first_name.empty() || name < first_name)) {
             first_name = name;
             first_text = text;
             first_id   = id;
