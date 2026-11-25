@@ -50,7 +50,7 @@ __device__ __forceinline__ float moe_sigmoid(float v) { return 1.0F / (1.0F + ex
 // not counted). Inlined, its two tanhf raised every MoE kernel's outside stall 10-40 % and moved
 // sealed routes/moe_pick bands of models that never call it (#1226). Its own calls pay one call and
 // return an output value, beside two tanhf.
-__device__ __noinline__ float moe_situ(float g, float u, float alpha, float limit) {
+static __device__ __noinline__ float moe_situ(float g, float u, float alpha, float limit) {
     return alpha * tanhf(g / alpha) * (1.0F / (1.0F + expf(-g))) * (limit * tanhf(u / limit));
 }
 
