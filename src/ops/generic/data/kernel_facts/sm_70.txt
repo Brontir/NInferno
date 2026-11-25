@@ -10035,10 +10035,11 @@ family vhmma
 # #1165), sm_70 alone: volta_hmma_kernel<format, epilogue, NG, ahead>, the kernel run_route
 # takes for an rmma.* route of its formats there (volta_hmma_takes); NG the 8-token column
 # groups, ahead the superblocks it loads ahead. A warp holds eight weight rows; one iteration
-# of the counted loop is one 256-value superblock of them (k_iter 1).
+# of the counted loop is one 256-value superblock of them, both sets of a SwiGLU call in it;
+# k_iter its m16n8-equivalent MMA work, 128 x NG x sets.
 # The columns: the key, the resources, the loop's counts and schedule as above, then the
 # pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
-# k_iter 1: one iteration is one 256-value superblock (the family's note above).
+# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
 family_nvcc 12.8.93
 family_kernels 48
 family_columns family fmt E NG ahead registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar sb_waits_global sb_waits_shared
@@ -10095,10 +10096,12 @@ family vgemv
 # volta_kquant_gemv_kernel<format, epilogue, NT>, a warp per output row over NT tokens, the
 # codes decoded to FP32 against FP32 activations (FFMA, no MMA); run_route takes it for a
 # lane-local register-MMA call the HMMA kernel does not (volta_gemv_takes). One iteration of
-# the counted loop is one 256-value superblock of the row (k_iter 1).
+# the counted loop is one 256-value superblock of the row; no MMA, so k_iter 0. A SwiGLU call
+# (E 2) runs two K loops, the gate's then the up's (kSets): loops 2, the heavier counted, so a
+# superblock costs two iterations. Compiled on every arch, routed on sm_70 alone.
 # The columns: the key, the resources, the loop's counts and schedule as above, then the
 # pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
-# k_iter 1: one iteration is one 256-value superblock (the family's note above).
+# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
 family_nvcc 12.8.93
 family_kernels 45
 family_columns family fmt E NT registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar sb_waits_global sb_waits_shared
@@ -10150,10 +10153,12 @@ vgemv Q8G32 2 4 46 0 0 0 2 0 0 0 - 6 2368 0 0 0 0 0 0 0 0 0 0 0 69 82 0 5 162 30
 family vgemvr
 # The same GEMV over R output rows a warp, for a large store (volta_kquant_gemv_rows_kernel<
 # format, epilogue, NT, R>, generic_volta_gemv.cu), sm_70 alone. One iteration of the counted
-# loop is one 256-value superblock of the warp's rows (k_iter 1).
+# loop is one 256-value superblock of the warp's rows; k_iter 0 and the SwiGLU loops as vgemv.
+# launch_format takes R > 1 for a store alone: the other epilogues' rows are compiled, never
+# launched.
 # The columns: the key, the resources, the loop's counts and schedule as above, then the
 # pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
-# k_iter 1: one iteration is one 256-value superblock (the family's note above).
+# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
 family_nvcc 12.8.93
 family_kernels 45
 family_columns family fmt E NT R registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar sb_waits_global sb_waits_shared

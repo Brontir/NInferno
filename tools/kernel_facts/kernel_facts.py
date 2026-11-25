@@ -520,7 +520,8 @@ class Family:
         assert not (inflight and producer), name
         self.name = name
         # The archs whose snapshot holds the family (None: every arch): Volta's substitutes of
-        # the register MMA run on sm_70 alone (their bodies trap elsewhere, NINFERNO_HMMA884).
+        # the register MMA run on sm_70 alone (the HMMA kernel's body traps elsewhere,
+        # NINFERNO_HMMA884; the GEMVs compile everywhere and are routed on sm_70 alone).
         self.archs = archs
         # Whether its rows carry the K loop's global loads in flight a lane
         # (sass_counts.INFLIGHT_FIELDS) after the wait classes: the vec section (#1185), whose
@@ -608,7 +609,7 @@ FAMILIES = {
     "vecmma": Family("vecmma", ("type", "gated"), lambda d: vec_mma_key(d), "vec_mma_kernel",
                      lambda key: 1, True, False),
     # Volta's substitutes of the register MMA (generic_volta_hmma.cu, generic_volta_gemv.cu,
-    # #1165): sm_70 alone. k_iter 1: an iteration is one 256-value superblock of the lane's rows.
+    # #1165): sm_70 alone. tiles 1: an iteration is one 256-value superblock of the warp's rows.
     "vhmma": Family("vhmma", ("fmt", "E", "NG", "ahead"),
                     lambda d: volta_key(d, "volta_hmma_kernel<", 4), "volta_hmma_kernel",
                     lambda key: 1, True, True, waits=True, archs=("70",)),
@@ -975,6 +976,26 @@ def family_audit(family, rows, arch=""):
                 problems.append(f"{c.bar} barriers in the iteration")
             if c.k_iter != VEC_MMA_K_ITER:
                 problems.append(f"k_iter {c.k_iter}, not {VEC_MMA_K_ITER}")
+        elif family == "vhmma":
+            # Volta's HMMA kernel: one K loop of mma.m8n8k4 over a 256-value superblock of the
+            # warp's eight rows; k_iter its m16n8-equivalent work, 8 rows x 8 NG tokens x 256 / 128
+            # per set (SwiGLU: two sets in the one loop).
+            sets = 2 if int(k[1]) == 2 else 1
+            want = 128 * int(k[2]) * sets
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.mma == 0:
+                problems.append("no MMA in the loop")
+            if c.k_iter != want:
+                problems.append(f"k_iter {c.k_iter}, not {want}")
+        elif family in ("vgemv", "vgemvr"):
+            # Volta's GEMV: FFMA, no MMA (k_iter 0); one K loop a set (SwiGLU: the gate's, then the
+            # up's, kSets loops; the heavier is counted, so a superblock costs `loops` iterations).
+            sets = 2 if int(k[1]) == 2 else 1
+            if c.loops != sets:
+                problems.append(f"{c.loops} candidate loops, not {sets}")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -1158,24 +1179,26 @@ SECTION_NOTES = {
         "# #1165), sm_70 alone: volta_hmma_kernel<format, epilogue, NG, ahead>, the kernel run_route",
         "# takes for an rmma.* route of its formats there (volta_hmma_takes); NG the 8-token column",
         "# groups, ahead the superblocks it loads ahead. A warp holds eight weight rows; one iteration",
-        "# of the counted loop is one 256-value superblock of them (k_iter 1).",
+        "# of the counted loop is one 256-value superblock of them, both sets of a SwiGLU call in it;",
+        "# k_iter its m16n8-equivalent MMA work, 128 x NG x sets.",
     ),
     "vgemv": (
         "# Volta's decode GEMV (src/ops/generic/generic_volta_gemv.cu, #1165), sm_70 alone:",
         "# volta_kquant_gemv_kernel<format, epilogue, NT>, a warp per output row over NT tokens, the",
         "# codes decoded to FP32 against FP32 activations (FFMA, no MMA); run_route takes it for a",
         "# lane-local register-MMA call the HMMA kernel does not (volta_gemv_takes). One iteration of",
-        "# the counted loop is one 256-value superblock of the row (k_iter 1).",
+        "# the counted loop is one 256-value superblock of the row; no MMA, so k_iter 0. A SwiGLU call",
+        "# (E 2) runs two K loops, the gate's then the up's (kSets): loops 2, the heavier counted, so a",
+        "# superblock costs two iterations. Compiled on every arch, routed on sm_70 alone.",
     ),
     "vgemvr": (
         "# The same GEMV over R output rows a warp, for a large store (volta_kquant_gemv_rows_kernel<",
         "# format, epilogue, NT, R>, generic_volta_gemv.cu), sm_70 alone. One iteration of the counted",
-        "# loop is one 256-value superblock of the warp's rows (k_iter 1).",
+        "# loop is one 256-value superblock of the warp's rows; k_iter 0 and the SwiGLU loops as vgemv.",
+        "# launch_format takes R > 1 for a store alone: the other epilogues' rows are compiled, never",
+        "# launched.",
     ),
 }
-# The section families whose k_iter is one superblock an iteration (their notes say so), not the
-# MMA work over an m16n8 tile the generic loop note names.
-SUPERBLOCK_ITER = ("vhmma", "vgemv", "vgemvr")
 
 
 def render_section(family, rows, nvcc):
@@ -1193,9 +1216,7 @@ def render_section(family, rows, nvcc):
         "# The columns: the key, the resources, the loop's counts and schedule as above, then the",
         "# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).",
         "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128)."
-        if f.marker != "IDP" and family not in SUPERBLOCK_ITER else
-        "# k_iter 1: one iteration is one 256-value superblock (the family's note above)."
-        if family in SUPERBLOCK_ITER else
+        if f.marker != "IDP" else
         "# k_iter is the K values one iteration covers per product (128 per dp4a over the row x token"
         "\n# products a warp accumulates; sass_counts.py), the MMA columns 0.",
     ) if f.loop else ("# The columns: the key, then the resources as above.",)
