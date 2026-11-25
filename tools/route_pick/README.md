@@ -39,28 +39,26 @@ there are none (the RTX 2080 Ti, the only sm_75 table). Such an answer is
 never demoted and never claims a shape-owned problem. An explicit `--route-table` stands alone and reads no overlay,
 and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
 
-## T 1-8: the analyzer's ranked lists (the switch to one decision source)
-Every class of sm_86, sm_89 and sm_120a with tensor cores gets a file (sm_75's chips are held, below), the tabled boards and the boards within
-`kCarryDistance` of a table included (50 files today; schema `ninferno-route-pick/2`). Each entry holds `ranked`, the
-widths T 1-8 as runs `[t_min, t_max, [route, ...]]` of `analyzer.rank()` over the repo's facts: every route the analyzer
-prices for the call, cheapest first, cut after the first register-MMA schedule (an A16 route every policy admits). The
-problems are every A16 entry of the capability's route tables, all three epilogues; a width with no priced route is
-left out. The T 9-32 `bands` keep the classes and widths above.
-A chip in `gen.py` `HELD_CHIPS` gets no ranked list, so its T 1-8 calls are answered by its route table and the rules
-as before; it keeps its bands where it has them (a class with none gets no file: every Turing chip's, most GA106 and
-AD106 classes'). Held today: AD102 (the analyzer prices rmma 12-16 % below its time there, #1211), GA106 / AD106 (the
-RTX 3060 and RTX 4060 Ti: w2x2 priced 8-19 % above its time, w1x8 1-18 % below, the wave term of #1224; Qwen3.5-9B
-Q4_K_M at C 5-8 -1.1 to -2.1 % and -0.7 to -1.1 % against master) and TU102 / TU104 / TU106 (the activation-ring
-latency kernel sm_75 launches is priced 1.2-1.3x its time, the plain w1x8 0.9x, #1183).
+## T 1-8: the analyzer inside the engine
+Decode and verify calls (T 1-8) are priced by the engine itself: `src/ops/generic/route_analyzer.cpp` is `analyzer.py`
+in C++, term for term, over the compiled-in facts (machine facts, arch limits, isa / sm_rate / launch facts, the build's
+kernel facts). The select list's authority `analyzer` (route_authorities.cpp `analyzer_entry`, after the route probe,
+the pins and Volta's fixed routes) asks `route_analyzer::device_routes` at the call: every route it prices for the
+call, cheapest first, cut after the first register-MMA schedule, memoized per board, kernel snapshot and call. It
+takes the first route its policy (exact activations refuse the int8 routes ggml_vec, r8, ggml_mmq), profile and
+build admit, as evidence `predicted`, ahead of the route tables, the dense tuner and the rules. Any shape the
+kernels take is priced, a model no table lists included; nothing is read from `routes/pick` at these widths. A
+prefill call and a list with no admitted route fall through to the older authorities.
 
-The engine (`route_table.cpp` `table_ranked_routes`, `route_authorities.cpp` `analyzer_entry`) reads the lists on the
-board the file was priced for, under `--route-policy evidence`, at any distance from a table. The select list's last
-authority, `analyzer` (after the route probe, the pins and Volta's fixed routes), takes the first route of the call's
-list that its policy (exact activations refuse the int8 routes ggml_vec, r8, ggml_mmq), profile and build admit, as
-evidence `predicted`. It answers ahead of the route tables, the dense tuner and the rules (vec, R8, MMQ verify, rmma);
-the dense tuner does not time those widths. A prefill call, a problem with no list and a list with no admitted route
-fall through to the older authorities. sm_70 has no file: Volta's HMMA authority answers first there, and the
-analyzer's Volta prices wait for the substitutes' kernel facts.
+`route_analyzer::kHeldChips` lists the chips it does not answer yet (the switch's gate: no card below -1 % end to
+end against master): AD102 (rmma priced 12-16 % below its time at T 2-4, #1211), AD106 / GA106 (w2x2 priced 8-19 %
+above its time, w1x8 1-18 % below, the wave term of #1224; Qwen3.5-9B Q4_K_M at C 5-8 on the RTX 3060 -1.1 to
+-2.1 %, on the RTX 4060 Ti -0.7 to -1.1 %) and TU102 / TU104 / TU106 (the activation-ring latency kernel sm_75
+launches is priced 1.2-1.3x its time, #1183).
+
+`ninferno-serve route-analyzer` prices cells of facts-table boards on a CPU (the lab's exams). `analyzer.py` stays
+the lab's copy: `ninferno_route_analyzer_parity_test` holds the two equal (the same candidates, order and prices
+within 1e-9) on one board of every chip, every A16 table shape and a new model's shapes.
 
 ## T 17-32 on sm_89 (#785)
 On compute capability 8.9 (`NARROW_CC`) every class's file also holds the bands of T 17-32 (`NARROW_HI`), on tabled

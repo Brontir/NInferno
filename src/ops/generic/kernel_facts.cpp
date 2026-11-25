@@ -507,6 +507,15 @@ std::vector<KernelFacts> rmma_rows(std::string_view arch) {
     return v;
 }
 
+std::vector<std::string> rmma_row_keys(std::string_view arch) {
+    std::vector<std::string> v;
+    if (const Snapshot* s = find(arch)) {
+        v.reserve(s->rows.size());
+        for (const auto& [key, facts] : s->rows) v.push_back(key);
+    }
+    return v;
+}
+
 std::string release_arch(int major, int minor) {
     const int cc = major * 10 + minor;
     std::string best;

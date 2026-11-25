@@ -214,6 +214,16 @@ add_test(NAME ninferno_route_analyzer_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_analyzer.py)
 set_tests_properties(ninferno_route_analyzer_test PROPERTIES LABELS host)
 
+# src/ops/generic/route_analyzer.cpp (ninferno-serve route-analyzer) equals tools/route_pick/analyzer.py:
+# the same candidates in the same order and every price within 1e-9, on one board of every chip with
+# facts, every A16 table shape and a new model's shapes, T 1-8. No GPU.
+if(TARGET ninferno-serve)
+  add_test(NAME ninferno_route_analyzer_parity_test
+    COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_analyzer_parity.py
+            $<TARGET_FILE:ninferno-serve>)
+  set_tests_properties(ninferno_route_analyzer_parity_test PROPERTIES LABELS host)
+endif()
+
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)

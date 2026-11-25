@@ -14,6 +14,7 @@
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/route_pins.h"
 
@@ -56,14 +57,6 @@ using detail::generic::RouteBand;
 using detail::generic::RouteEntry;
 using Json = nlohmann::json;
 
-// A run of widths whose calls take the same ranked list (routes/pick "ranked"): cheapest first,
-// ending at the first A16 register-MMA schedule (tools/route_pick/gen.py ranked_list).
-struct RankedBand {
-    std::int32_t t_min = 1;
-    std::int32_t t_max = 1;
-    std::vector<Route> routes;
-};
-
 // The first call width the prefill route profile makes token-invariant.
 constexpr std::int32_t kPrefillMinTokens = kPrefillPinMinTokens;
 
@@ -101,8 +94,6 @@ struct Table {
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
     // The analyzer's predicted bands (routes/pick/<class>.json; read_predicted), per problem.
     std::unordered_map<std::uint64_t, std::vector<RouteBand>> predicted;
-    // The analyzer's ranked routes at T 1-8 (the same file's "ranked"), per problem.
-    std::unordered_map<std::uint64_t, std::vector<RankedBand>> ranked;
     // The expert-call law's MoE picks (routes/moe_pick/<class>.json; read_moe_predicted), per
     // layer and the banks' layouts it priced (gate/up, down in ggml_frag_v1): decode bands only
     // (T 1-8).
@@ -406,17 +397,14 @@ constexpr std::int32_t kPredictedMaxTokens = 32;
 static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTokens,
               "a predicted band starts above the vec and R8 widths (T <= 8), which pick.py does "
               "not price, and ends at the widest verify");
-// The widths of the analyzer's ranked lists (tools/route_pick/analyzer.py, the decode and verify
-// calls it was scored on): T 1-8, the ones below the predicted bands.
-constexpr std::int32_t kRankedMaxTokens = 8;
-static_assert(kRankedMaxTokens < kPredictedMinTokens,
-              "the ranked lists end below the predicted bands: one file answer a width");
+// The engine's analyzer prices T 1-8 at the call (route_analyzer.h), below the predicted bands.
+static_assert(route_analyzer::kMaxTokens < kPredictedMinTokens,
+              "the analyzer's widths end below the predicted bands: one answer a width");
 
-// A ninferno-route-pick/2 file (tools/route_pick/gen.py) into `table.predicted` and
-// `table.ranked`: its class must be this device's own (gpu.class), each entry an A16 problem of
-// the generic path with bands inside T 9-32 and ranked lists inside T 1-8, at least one of the two
-// (no prefill route, no claim, no route_as), routes this build names. A refused file is an error:
-// it is this device's own file.
+// A ninferno-route-pick/2 file (tools/route_pick/gen.py) into `table.predicted`: its class must
+// be this device's own (gpu.class), each entry an A16 problem of the generic path with bands
+// inside T 9-32 (no prefill route, no claim, no route_as, no ranked list: T 1-8 is the engine's
+// analyzer), routes this build names. A refused file is an error: it is this device's own file.
 void read_predicted(const std::string& path, Table& table) {
     std::ifstream in(path_from_utf8(path), std::ios::binary);
     if (!in) throw std::runtime_error("route pick: cannot open " + path);
@@ -453,7 +441,6 @@ void read_predicted(const std::string& path, Table& table) {
             return;
         }
         std::size_t entries = 0;
-        std::size_t ranked  = 0;
         std::unordered_set<std::uint64_t> seen;
         for (const Json& e : root.at("entries")) {
             const std::string where = path + " entry " + e.dump();
@@ -468,12 +455,15 @@ void read_predicted(const std::string& path, Table& table) {
                 e.contains("route_as")) {
                 refuse("a predicted entry holds bands only", where);
             }
-            if (!e.contains("bands") && !e.contains("ranked")) {
-                refuse("a predicted entry with neither bands nor ranked routes", where);
+            if (e.contains("ranked")) {
+                refuse("a ranked list: T 1-8 is priced by the engine (route_analyzer.cpp), not "
+                       "read from a file",
+                       where);
             }
+            if (!e.contains("bands")) refuse("a predicted entry without bands", where);
             const auto key = key_of(*q, *compute, *epi, n, k);
             if (!seen.insert(key).second) refuse("a duplicate problem", where);
-            if (e.contains("bands")) {
+            {
                 std::vector<RouteBand> bands;
                 for (const Json& b : e.at("bands")) {
                     bands.push_back({b.at(0).get<std::int32_t>(), b.at(1).get<std::int32_t>(),
@@ -489,38 +479,9 @@ void read_predicted(const std::string& path, Table& table) {
                 }
                 if (!bands.empty()) table.predicted.emplace(key, std::move(bands));
             }
-            if (e.contains("ranked")) {
-                // [[t_min, t_max, [route, ...]], ...]: a list of one route at least, cheapest
-                // first.
-                std::vector<RankedBand> lists;
-                if (!e.at("ranked").is_array() || e.at("ranked").empty()) {
-                    refuse("a ranked field that is not a list of lists", where);
-                }
-                for (const Json& b : e.at("ranked")) {
-                    if (!b.is_array() || b.size() != 3 || !b.at(2).is_array()) {
-                        refuse("a ranked list that is not [t_min, t_max, [route, ...]]", where);
-                    }
-                    RankedBand band{b.at(0).get<std::int32_t>(), b.at(1).get<std::int32_t>(), {}};
-                    for (const Json& r : b.at(2)) band.routes.push_back(require_route(r, where));
-                    if (band.routes.empty()) refuse("an empty ranked list", where);
-                    lists.push_back(std::move(band));
-                }
-                check_bands(lists, where);
-                for (const RankedBand& b : lists) {
-                    if (b.t_max > kRankedMaxTokens) {
-                        refuse("a ranked list outside T 1-" + std::to_string(kRankedMaxTokens),
-                               where);
-                    }
-                }
-                if (!lists.empty()) {
-                    table.ranked.emplace(key, std::move(lists));
-                    ++ranked;
-                }
-            }
             ++entries;
         }
         table.status.predicted_entries = entries;
-        table.status.ranked_entries    = ranked;
         table.status.predicted_path    = path;
         table.status.predicted_sha256  = sha256_hex(std::string_view(bytes));
     } catch (const nlohmann::json::exception& e) {
@@ -798,8 +759,7 @@ DeviceTables& here() {
 void publish_locked(DeviceTables& d, std::shared_ptr<const Table> table) {
     d.table = std::move(table);
     d.has_route_as.store(d.table && !d.table->route_as.empty(), std::memory_order_release);
-    d.has_generic.store(d.table && (!d.table->generic.empty() || !d.table->predicted.empty() ||
-                                    !d.table->ranked.empty()),
+    d.has_generic.store(d.table && (!d.table->generic.empty() || !d.table->predicted.empty()),
                         std::memory_order_release);
     d.has_moe.store(d.table && (!d.table->moe.empty() || !d.table->moe_predicted.empty()),
                     std::memory_order_release);
@@ -830,9 +790,7 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
              ? ""
              : "; " + std::to_string(table->status.predicted_entries) + " problems' T " +
                    std::to_string(kPredictedMinTokens) + "-" + std::to_string(kPredictedMaxTokens) +
-                   " bands and T 1-" + std::to_string(kRankedMaxTokens) + " ranked routes (" +
-                   std::to_string(table->status.ranked_entries) +
-                   " problems) predicted from this board's facts (" + table->status.predicted_path +
+                   " bands predicted from this board's facts (" + table->status.predicted_path +
                    ")") +
         (table->status.moe_predicted_skipped.empty()
              ? ""
@@ -883,12 +841,11 @@ void ensure_default_locked(DeviceTables& d) {
                 tables.erase(tables.begin());
                 fill_from(*nearest, tables);
                 // The analyzer's file for this board class, where tools/route_pick wrote it
-                // (routes/pick/<class>.json): its ranked lists (T 1-8, read only on the board the
-                // file was priced for: table_ranked_routes, the select authority "analyzer") and
-                // its bands (T 9-32). Past kCarryDistance the bands answer ahead of the nearest
-                // table (whose answers would all be Transferred or Borrowed); within it, only the
-                // table's gaps: a problem it holds no entry of its own for, one borrowed by
-                // fill_from, or a width its own entry has no band at (#1068, table_route_answer).
+                // (routes/pick/<class>.json): its bands (T 9-32). Past kCarryDistance the bands
+                // answer ahead of the nearest table (whose answers would all be Transferred or
+                // Borrowed); within it, only the table's gaps: a problem it holds no entry of its
+                // own for, one borrowed by fill_from, or a width its own entry has no band at
+                // (#1068, table_route_answer).
                 const auto pick = path_from_utf8(dir) / "pick" /
                                   path_from_utf8(route_table_file_name(route_gpu_class()));
                 std::error_code missing;
@@ -1042,12 +999,6 @@ std::vector<std::int32_t> route_table_breakpoints(std::int32_t from) {
     }
     for (const auto& bands : table->predicted | std::views::values) {
         for (const RouteBand& band : bands) {
-            add(band.t_min);
-            add(static_cast<std::int64_t>(band.t_max) + 1);
-        }
-    }
-    for (const auto& lists : table->ranked | std::views::values) {
-        for (const RankedBand& band : lists) {
             add(band.t_min);
             add(static_cast<std::int64_t>(band.t_max) + 1);
         }
@@ -1308,30 +1259,6 @@ std::optional<TableAnswer> table_predicted_answer(const Problem& problem, std::i
         }
     }
     return std::nullopt;
-}
-
-std::vector<Route> table_ranked_routes(const Problem& problem, std::int32_t tokens) {
-    if (tokens < 1 || tokens > kRankedMaxTokens || route_policy() == RoutePolicy::Legacy) return {};
-    DeviceTables& d = here();
-    if (d.settled.load(std::memory_order_acquire) &&
-        !d.has_generic.load(std::memory_order_acquire)) {
-        return {};
-    }
-    const auto table = active_table(d);
-    if (!table) return {};
-    const auto compute = compute_class(problem.qtype, problem.policy);
-    auto p =
-        table->ranked.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
-    // The same fp8 row-F32 fallback as table_route_answer.
-    if (p == table->ranked.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
-        p = table->ranked.find(
-            key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
-    }
-    if (p == table->ranked.end()) return {};
-    for (const RankedBand& band : p->second) {
-        if (tokens >= band.t_min && tokens <= band.t_max) return band.routes;
-    }
-    return {};
 }
 
 std::optional<Route> table_route(const Problem& problem, std::int32_t tokens, bool prefill) {
