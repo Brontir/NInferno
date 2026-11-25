@@ -136,9 +136,8 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
  * blocks when its columns alone would not fill the GPU; `scratch` (FP32) holds the splits'
  * partials, inkling2_attention_scratch_bytes of them (0: one split, no scratch read).
  */
-[[nodiscard]] std::size_t inkling2_attention_scratch_bytes(std::int32_t q_heads,
-                                                           std::int32_t kv_heads,
-                                                           std::int32_t columns);
+[[nodiscard]] std::size_t
+inkling2_attention_scratch_bytes(std::int32_t q_heads, std::int32_t kv_heads, std::int32_t columns);
 
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
                         const Gemma4KvLayer& cache, const Tensor& positions, std::int32_t extent,

@@ -387,12 +387,12 @@ int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout, 
         tr(drr.p, DType::BF16, {dr, hq, tokens, batch});
     Tensor ts(ds.p, DType::BF16, {hq, tokens, batch}), tb(db.p, DType::FP32, {dr, extent});
     Tensor tp(dp.p, DType::I32, {tokens, batch}), to(dout.p, DType::BF16, {d, hq, tokens, batch});
-    const std::size_t scratch_bytes = ops::inkling2_attention_scratch_bytes(hq, hkv, tokens * batch);
+    const std::size_t scratch_bytes =
+        ops::inkling2_attention_scratch_bytes(hq, hkv, tokens * batch);
     DeviceBuffer scratch(std::max<std::size_t>(scratch_bytes, 4));
-    const Tensor part = scratch_bytes == 0
-                            ? Tensor{}
-                            : Tensor(scratch.p, DType::FP32,
-                                     {static_cast<std::int32_t>(scratch_bytes / 4)});
+    const Tensor part = scratch_bytes == 0 ? Tensor{}
+                                           : Tensor(scratch.p, DType::FP32,
+                                                    {static_cast<std::int32_t>(scratch_bytes / 4)});
     ops::inkling2_attention(tq, tr, ts, tb, cache, tp, extent, part, to, nullptr);
     cuda_synchronize();
     std::vector<double> expected(std::size_t(d) * hq * tokens * batch);

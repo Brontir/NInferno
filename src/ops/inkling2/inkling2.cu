@@ -311,10 +311,11 @@ constexpr int kAttnPart = 2 + 128; // m, z, acc[128]
 
 __device__ __forceinline__ void load4(const __nv_bfloat16* row, int i, int d, float (&x)[4]) {
     if (i + 3 < d) {
-        const uint2 w = *reinterpret_cast<const uint2*>(row + i);
+        const uint2 w          = *reinterpret_cast<const uint2*>(row + i);
         const __nv_bfloat162 a = *reinterpret_cast<const __nv_bfloat162*>(&w.x);
         const __nv_bfloat162 b = *reinterpret_cast<const __nv_bfloat162*>(&w.y);
-        x[0] = __low2float(a), x[1] = __high2float(a), x[2] = __low2float(b), x[3] = __high2float(b);
+        x[0] = __low2float(a), x[1] = __high2float(a), x[2] = __low2float(b),
+        x[3] = __high2float(b);
     } else {
 #pragma unroll
         for (int j = 0; j < 4; ++j) { x[j] = i + j < d ? __bfloat162float(row[i + j]) : 0.0F; }
@@ -359,10 +360,10 @@ __global__ void attention_kernel(AttnParams p) {
                 base + static_cast<std::int64_t>(detail::gemma4_kv_slot(p.kv, binding, kk)) * p.d;
             load4(p.k + row, i, p.d, kx[u]);
             load4(p.v + row, i, p.d, vx[u]);
-            const int dist = pos - kk;
-            const float bias =
-                dist < p.extent && lane < p.dr ? p.bias[static_cast<std::int64_t>(dist) * p.dr + lane]
-                                               : 0.0F;
+            const int dist   = pos - kk;
+            const float bias = dist < p.extent && lane < p.dr
+                                   ? p.bias[static_cast<std::int64_t>(dist) * p.dr + lane]
+                                   : 0.0F;
 #pragma unroll
             for (int hh = 0; hh < G; ++hh) {
                 float t = rv[hh] * bias;
@@ -380,10 +381,13 @@ __global__ void attention_kernel(AttnParams p) {
         for (int hh = 0; hh < G; ++hh) {
             const float s1 = two ? s[1][hh] : -INFINITY;
             const float mn = fmaxf(m[hh], fmaxf(s[0][hh], s1));
-            const float c = expf(m[hh] - mn), e0 = expf(s[0][hh] - mn), e1 = two ? expf(s1 - mn) : 0.0F;
-            z[hh] = z[hh] * c + e0 + e1;
+            const float c = expf(m[hh] - mn), e0 = expf(s[0][hh] - mn),
+                        e1 = two ? expf(s1 - mn) : 0.0F;
+            z[hh]          = z[hh] * c + e0 + e1;
 #pragma unroll
-            for (int j = 0; j < 4; ++j) { acc[hh][j] = acc[hh][j] * c + e0 * vx[0][j] + e1 * vx[1][j]; }
+            for (int j = 0; j < 4; ++j) {
+                acc[hh][j] = acc[hh][j] * c + e0 * vx[0][j] + e1 * vx[1][j];
+            }
             m[hh] = mn;
         }
     }
@@ -603,9 +607,9 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
 std::size_t inkling2_attention_scratch_bytes(std::int32_t q_heads, std::int32_t kv_heads,
                                              std::int32_t columns) {
     const int splits = attention_splits(kv_heads, columns);
-    return splits == 1 ? 0
-                       : static_cast<std::size_t>(columns) * q_heads * splits * kAttnPart *
-                             sizeof(float);
+    return splits == 1
+               ? 0
+               : static_cast<std::size_t>(columns) * q_heads * splits * kAttnPart * sizeof(float);
 }
 
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
@@ -623,11 +627,11 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
     const int hkv = cache.k.ne[cache.block_tables.data ? 3 : 2];
     need(!kv.fp8, op, "BF16 cache planes");
     need(kv.batch == batch, op, "one binding a batch row");
-    need(d <= 128 && d % 4 == 0 && dr <= 32 && hq % hkv == 0 && hq / hkv <= kAttnMaxGroup && r.ne[1] == hq && r.ne[2] == tokens &&
-             r.ne[3] == batch && sink.ne[0] == hq && sink.ne[1] == tokens && sink.ne[2] == batch &&
-             bias.ne[0] == dr && bias.ne[1] == extent && positions.ne[0] == tokens &&
-             positions.ne[1] == batch && out.ne[0] == d && out.ne[1] == hq && out.ne[2] == tokens &&
-             out.ne[3] == batch,
+    need(d <= 128 && d % 4 == 0 && dr <= 32 && hq % hkv == 0 && hq / hkv <= kAttnMaxGroup &&
+             r.ne[1] == hq && r.ne[2] == tokens && r.ne[3] == batch && sink.ne[0] == hq &&
+             sink.ne[1] == tokens && sink.ne[2] == batch && bias.ne[0] == dr &&
+             bias.ne[1] == extent && positions.ne[0] == tokens && positions.ne[1] == batch &&
+             out.ne[0] == d && out.ne[1] == hq && out.ne[2] == tokens && out.ne[3] == batch,
          op,
          "D <= 128 (a multiple of 4), Dr <= 32, Hq / Hkv <= 4, q/out [D, Hq, T, B], "
          "r [Dr, Hq, T, B], sink [Hq, T, B], "
@@ -654,10 +658,18 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
     }
     const dim3 grid(hkv, columns, p.splits);
     switch (hq / hkv) {
-    case 1: attention_kernel<1><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
-    case 2: attention_kernel<2><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
-    case 3: attention_kernel<3><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
-    default: attention_kernel<4><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
+    case 1:
+        attention_kernel<1><<<grid, 32 * kAttnWarps, 0, stream>>>(p);
+        break;
+    case 2:
+        attention_kernel<2><<<grid, 32 * kAttnWarps, 0, stream>>>(p);
+        break;
+    case 3:
+        attention_kernel<3><<<grid, 32 * kAttnWarps, 0, stream>>>(p);
+        break;
+    default:
+        attention_kernel<4><<<grid, 32 * kAttnWarps, 0, stream>>>(p);
+        break;
     }
     CUDA_CHECK(cudaGetLastError());
     if (p.splits > 1) {
