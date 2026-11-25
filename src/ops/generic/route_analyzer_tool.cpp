@@ -14,6 +14,15 @@ namespace ninferno::tools {
 namespace ra = ops::route_analyzer;
 using ops::detail::generic::Epilogue;
 
+namespace {
+// A cell's PCI id ("0x2B85"); 0 (no board: the cell prints "- -") where it is not one.
+std::uint32_t pci_of(const std::string& text) {
+    try {
+        return static_cast<std::uint32_t>(std::stoul(text, nullptr, 16));
+    } catch (const std::exception&) { return 0; }
+}
+} // namespace
+
 int route_analyzer_main(int argc, char** argv) {
     std::string cells;
     ra::Settings s;
@@ -58,7 +67,7 @@ int route_analyzer_main(int argc, char** argv) {
                                  std::to_string(k) + ' ' + std::to_string(T);
         const auto q = ra::format_of_name(fmt);
         const GpuFactsRow* row =
-            find_gpu_facts(static_cast<std::uint32_t>(std::stoul(pci, nullptr, 16)));
+            find_gpu_facts(pci_of(pci));
         const auto card  = row ? ra::card_of(*row) : std::nullopt;
         const Epilogue e = ep == "swiglu" ? Epilogue::SwiGlu
                            : ep == "add"  ? Epilogue::AddResidual

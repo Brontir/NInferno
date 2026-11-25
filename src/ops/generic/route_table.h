@@ -89,7 +89,6 @@ struct TableAnswer {
 [[nodiscard]] std::optional<TableAnswer> table_predicted_answer(const Problem& problem,
                                                                 std::int32_t tokens);
 
-
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a
 // shape-owned Linear table. Under --route-policy evidence (#614 F1) a claim whose answer is

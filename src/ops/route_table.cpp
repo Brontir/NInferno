@@ -1003,8 +1003,6 @@ std::vector<std::int32_t> route_table_breakpoints(std::int32_t from) {
             add(static_cast<std::int64_t>(band.t_max) + 1);
         }
     }
-    // The analyzer's answer may turn at any decode or verify width (route_analyzer.h).
-    for (std::int64_t t = 1; t <= route_analyzer::kMaxTokens + 1; ++t) add(t);
     for (const auto& bands : table->route_as | std::views::values) {
         for (const RouteAsBand& band : bands) {
             add(band.t_min);

@@ -14,6 +14,7 @@
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/generic/route_table.h"
 #include "ops/route_pins.h"
 
 #include <algorithm>
@@ -186,7 +187,7 @@ std::optional<KernelFacts> rmma_row(const Card& c, const std::string& decoder, i
     key.latency  = latency;
     key.sums     = 0;
     auto r       = kf::rmma_facts(c.arch, key);
-    if (r && !has_loop(*r)) r.reset();
+    if (r && (!has_loop(*r) || r->registers <= 0 || !r->loop || r->loop->k_iter <= 0)) r.reset();
     return r;
 }
 
@@ -194,7 +195,7 @@ std::optional<KernelFacts> r8_row(const Card& c, const std::string& codec, int W
                                   Epilogue ep, bool pre) {
     if (codec.empty()) return std::nullopt;
     auto r = kf::r8_facts(c.arch, kf::R8KernelKey{codec, Wp, R, nt, epi_of(ep), pre});
-    if (r && !has_loop(*r)) r.reset();
+    if (r && (!has_loop(*r) || r->registers <= 0)) r.reset();
     return r;
 }
 
@@ -253,7 +254,8 @@ std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns) 
                                            &isa->shared_latency,
                                            &isa->l1_ldg32_cycles_per_sm,
                                            &isa->l2_bytes_per_sm_clock,
-                                           &isa->dram_latency.w1};
+                                           &isa->dram_latency.w1,
+                                           &isa->l2_latency.w1};
     for (const auto* n : need)
         if (!n->has_value()) return std::nullopt;
     if (!rate->warp_fill_bytes_per_clock) return std::nullopt;
@@ -495,7 +497,7 @@ std::optional<VecRow> vec_row(const Card& c, QType q, Epilogue ep, int k, int T,
     const int ks = vec_ks(ep, k, inst);
     const auto r = kf::vec_facts(
         c.arch, kf::VecKernelKey{ff.ggml_type, T, ks, ep == Epilogue::SwiGlu, bounded});
-    if (!r) return std::nullopt;
+    if (!r || r->registers <= 0) return std::nullopt;
     return VecRow{*r, ks};
 }
 
@@ -798,7 +800,7 @@ std::optional<double> price_vec_mma(const Card& c, const Settings& s, QType q, E
         return std::nullopt;
     }
     const auto row = kf::vec_mma_facts(c.arch, ggml_type(q), ep == Epilogue::SwiGlu);
-    if (!row || loop_i(*row, &LoopCounts::mma) <= 0) return std::nullopt;
+    if (!row || row->registers <= 0 || loop_i(*row, &LoopCounts::mma) <= 0) return std::nullopt;
     const KernelFacts& r  = *row;
     const double rows_cta = ep == Epilogue::SwiGlu ? 8.0 : 16.0;
     const double ctas     = std::ceil(n / rows_cta);
@@ -1103,7 +1105,8 @@ std::optional<Card> card_of(const GpuFactsRow& row) {
 }
 
 std::optional<Card> card_of(const DeviceClass& device) {
-    if (const GpuFactsRow* row = find_gpu_facts(device.pci_device_id)) return card_of(*row);
+    // The board's resolved facts (machine_facts: the row of its id and subsystem, a laptop's clock,
+    // the driver's values on the facts grid for an unknown id): for a stock board the row's.
     const MachineFacts& f = device.facts;
     if (f.reference_clock_khz <= 0 || f.dram_gbps() <= 0) return std::nullopt;
     return card_from(device.compute_capability(), device.sms, f.reference_clock_khz * 1e-3,
@@ -1118,9 +1121,14 @@ std::optional<double> price_ns(const Card& card, const Call& call, std::string_v
         const auto a  = price(card, call, "rmma.m1.n2.w1x4", s, false);
         const auto b  = price(card, call, route, s, true);
         const auto ai = price(card, call, "rmma.m1.n2.w1x4", s, true);
-        if (a && b && ai) return *a * *b / *ai;
+        if (a && b && ai && *ai > 0) {
+            const double t = *a * *b / *ai;
+            return std::isfinite(t) && t > 0 ? std::optional<double>(t) : std::nullopt;
+        }
     }
-    return price(card, call, route, s);
+    const auto t = price(card, call, route, s);
+    // A price the facts cannot give (a zero count in a row) is no price, never inf or NaN.
+    return t && std::isfinite(*t) && *t > 0 ? t : std::nullopt;
 }
 
 std::vector<std::string> candidates(const Card& card, const Call& call, const Settings& s) {
@@ -1166,7 +1174,16 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
                                                   std::int32_t tokens) {
     if (tokens < 1 || tokens > kMaxTokens || route_policy() == RoutePolicy::Legacy) return {};
     if (!format_row(problem.qtype)) return {};
-    const DeviceClass& d = device_class();
+    // The analyzer prices A16 calls (the exam grids'); an A4 call (NVFP4 under --activations a4)
+    // keeps its measured A4 bands and the rules.
+    if (detail::generic::compute_class(problem.qtype, problem.policy) != detail::generic::ComputeClass::A16) return {};
+    const DeviceClass* dp = nullptr;
+    try {
+        dp = &device_class();
+    } catch (const std::exception&) {
+        return {}; // no device and no substitute (a CPU-only context): the older authorities answer
+    }
+    const DeviceClass& d = *dp;
     for (const std::string_view chip : kHeldChips)
         if (d.chip == chip) return {};
     // The architectures the switch scored (sm_75, sm_86, sm_89, sm_120a) on boards with tensor
@@ -1175,8 +1192,12 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
     const int cc = d.compute_capability();
     if ((cc != 75 && cc != 86 && cc != 89 && cc != 120) || d.facts.mma_slow) return {};
     const auto kernels = kf::sass_arch_of(d, substituted_device_class() != nullptr);
-    std::string key = d.id() + '|' + std::to_string(d.pci_device_id) + '|' + kernels.value_or("-") +
-                      '|' + std::to_string(static_cast<int>(problem.qtype)) + '|' +
+    // Keyed by every number the price reads of the board (its SMs, clock and bus), not its name:
+    // two classes of one chip and SM count on other clocks or memory price apart.
+    std::string key = d.id() + '|' + std::to_string(d.sms) + '|' +
+                      std::to_string(d.facts.reference_clock_khz) + '|' +
+                      std::to_string(d.facts.dram_gbps()) + '|' + kernels.value_or("-") + '|' +
+                      std::to_string(static_cast<int>(problem.qtype)) + '|' +
                       std::to_string(static_cast<int>(problem.epilogue)) + '|' +
                       std::to_string(problem.n) + '|' + std::to_string(problem.k) + '|' +
                       std::to_string(tokens);
