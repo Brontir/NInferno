@@ -293,7 +293,12 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
         per = launch['units'] * sets / math.ceil(ctas / sms)
         cyc = c['imma_w'] if '16832' in r.get('mma_shape', '') else c['imma_n']
         issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, _num(r['stall_sum']) / clk)
-        unit = per * (issue + 4096.0 * bits * sms / bus)
+        # The weights come from DRAM once over the launch (mmq_unit.cpp unit_facts_of): the row tiles' K steps spread over
+        # the launch's units, at most one weight tile a resident CTA an iteration (a tile each up to the SMs, or the
+        # stream-k CTAs); a tile is 128 rows x 256 values.
+        resident = ctas if launch['split'] else min(launch['tiles'], int(sms))
+        weight_tiles = min(resident, math.ceil(nt * max(1, math.ceil(k / 256.0)) / float(launch['units'])))
+        unit = per * (issue + 4096.0 * bits * weight_tiles / bus)
         # generic_gemm.cpp GgmlMmq: the quantizer (pre), one product launch a weight set (a gated call runs the gate's and
         # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
         # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch, and its bytes: each output reads
@@ -606,7 +611,7 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
     regs, shared = _num(r['registers']), _num(r['shared'])
     occ = occupancy(c, warps, regs)
     if shared > 0:
-        occ = min(occ, float(int(c['smem_sm'] // (shared + c.get('smem_res', 1024.0)))))
+        occ = max(min(occ, float(int(c['smem_sm'] // (shared + c.get('smem_res', 1024.0))))), 1.0)
     tot, stall = _num(r['total']), _num(r['stall_sum'])
     rows_warp = 8.0 if kind == 'hmma' else rows_cta / warps      # hmma: a warp's eight fragment rows; gemv: R rows a warp
     bytes_iter = rows_warp * 256.0 * bits / 8.0 * sets            # a warp's iteration: 256 values of each of its rows
