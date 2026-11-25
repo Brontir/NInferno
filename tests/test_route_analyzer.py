@@ -68,6 +68,9 @@ def main():
     assert analyzer.price_ns(sm89, F, odd, 'rmma.m1.n1.w1x8') is None
     assert not any(r.startswith('rmma.') for r in analyzer.candidates(sm89, F, odd))
     assert analyzer.price_ns(sm89, F, dict(odd, k=4096), 'rmma.m1.n1.w1x8') is not None
+    # A K of whole 32-value steps but not of whole Q4_K superblocks (supports(): K % 256): no route at all.
+    assert analyzer.price_ns(sm89, F, dict(odd, k=5216), 'rmma.m1.n1.w1x8') is None
+    assert analyzer.rank(sm89, F, dict(odd, k=5216)) == []
     assert analyzer.price_ns(sm89, F, dict(odd, k=4096), 'rmma.m1.n1.w1x8.c2') is None
     print('boards %d, shapes %d, T 1-8: %d failures' % (len(bs), len(shapes), failures))
     return 1 if failures else 0

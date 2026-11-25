@@ -76,6 +76,10 @@ FORMATS = {
     'q5': (5.25, 'GroupwiseG64Decoder<5>', 'W4a8G64<5>', None), 'q6': (6.25, 'GroupwiseG64Decoder<6>', 'W4a8G64<6>', None),
 }
 BITS = {f: v[0] for f, v in FORMATS.items()}
+# generic_select.cpp supports(): the K a weight of the format must span to be loaded at all (a ggml block format's block
+# values, ggml_plane_bytes; NVFP4's 64; the groupwise and BF16 / FP8 layouts take any K): no route of it otherwise.
+FORMAT_K = dict({f: 256 for f in ('q4k', 'q5k', 'q6k', 'q3k', 'q2k', 'iq4xs', 'iq3s', 'iq3xxs', 'iq2s', 'iq2xs', 'iq2xxs',
+                                  'iq1s', 'iq1m')}, q40=32, q41=32, q50=32, q51=32, iq4nl=32, nvfp4=64)
 # generic_select.cpp k_multiple: the K step rmma_refusal requires of a register-MMA route (run_values: a lane's run;
 # the ggml 32-value block formats their block).
 RMMA_K_MULTIPLE = dict({f: 32 for f in FORMATS}, bf16=8, q8=8, fp8=16, fp8r32=16, nvfp4=16, q4=16, q5=16, q6=16)
@@ -688,6 +692,8 @@ def _price(gpu, F, shape, route, P, issue=False):
         return None
     n, k, T = float(shape['n']), float(shape['k']), max(float(shape.get('T', 1)), 1.0)
     kf, bits, sets = c['kf'], BITS[fmt], 2.0 if ep == 'swiglu' else 1.0   # SwiGLU: two weight sets
+    if k % FORMAT_K.get(fmt, 1) != 0:                         # supports(): the weight itself is refused
+        return None
     m = _RMMA.match(route)
     if m and k % RMMA_K_MULTIPLE.get(fmt, 32) != 0:           # rmma_refusal Extent: the resolver demotes the route
         return None
