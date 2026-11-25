@@ -132,6 +132,25 @@ struct Priced {
 // taking the first route its policy admits.
 [[nodiscard]] std::vector<Priced> rank(const Card& card, const Call& call, const Settings& s = {});
 
+// The chips whose decode calls the analyzer does not answer yet (the switch's gate: no card below
+// -1 % end to end against the rules it replaces). AD102: rmma priced 12-16 % below its time at
+// T 2-4 (#1211). AD106 / GA106: w2x2 priced 8-19 % above its time, w1x8 1-18 % below (the wave
+// term, #1224). TU102 / TU104 / TU106: the activation-ring latency kernel priced 1.2-1.3x (#1183).
+inline constexpr std::string_view kHeldChips[] = {"ad102", "ad106", "ga106", "tu102", "tu104", "tu106"};
+
+// The widths the analyzer answers: decode and verify calls.
+inline constexpr std::int32_t kMaxTokens = 8;
+
+// The engine's question (route_authorities.cpp analyzer_entry): the analyzer's routes of a decode
+// or verify call on this thread's device (device_class()), cheapest first, cut after the first
+// register-MMA schedule (an A16 route every policy admits, so no route past it is ever taken), as
+// engine routes (a name this build does not compile is left out). Memoized per board, kernel
+// snapshot and call: the facts are compiled in, so a build prices a call once. Empty for T outside
+// 1-8, a held chip, the legacy route policy, a board or format without facts, or a device whose
+// kernels are not the snapshot the price reads.
+[[nodiscard]] std::vector<detail::generic::Route> device_routes(const detail::generic::Problem& problem,
+                                                                std::int32_t tokens);
+
 // The format's route-table name ("q4k"), as the analyzer's lists and the exam grids spell it.
 [[nodiscard]] std::string_view format_name(QType qtype);
 // The format of that name; nullopt for a name the law does not price.

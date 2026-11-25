@@ -13,6 +13,7 @@
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/route_pins.h"
 
 #include <algorithm>
 #include <array>
@@ -1158,6 +1159,36 @@ std::vector<std::string> candidates(const Card& card, const Call& call, const Se
     for (const std::string& r : names)
         if (price_ns(card, call, r, s)) out.push_back(r);
     return out;
+}
+
+std::vector<detail::generic::Route> device_routes(const detail::generic::Problem& problem,
+                                                  std::int32_t tokens) {
+    if (tokens < 1 || tokens > kMaxTokens || route_policy() == RoutePolicy::Legacy) return {};
+    if (!format_row(problem.qtype)) return {};
+    const DeviceClass& d = device_class();
+    for (const std::string_view chip : kHeldChips)
+        if (d.chip == chip) return {};
+    const auto kernels = kf::sass_arch_of(d, substituted_device_class() != nullptr);
+    std::string key = d.id() + '|' + std::to_string(d.pci_device_id) + '|' + kernels.value_or("-") + '|' +
+                      std::to_string(static_cast<int>(problem.qtype)) + '|' +
+                      std::to_string(static_cast<int>(problem.epilogue)) + '|' + std::to_string(problem.n) +
+                      '|' + std::to_string(problem.k) + '|' + std::to_string(tokens);
+    static std::mutex mu;
+    static std::unordered_map<std::string, std::vector<detail::generic::Route>> memo;
+    {
+        std::lock_guard lock(mu);
+        if (const auto it = memo.find(key); it != memo.end()) return it->second;
+    }
+    std::vector<detail::generic::Route> out;
+    const auto card = card_of(d);
+    if (card && kernels && *kernels == card->arch) {
+        for (const Priced& p : rank(*card, Call{problem.qtype, problem.epilogue, problem.n, problem.k, tokens})) {
+            if (const auto r = detail::generic::parse_route(p.route)) out.push_back(*r);
+            if (p.route.rfind("rmma.", 0) == 0) break;
+        }
+    }
+    std::lock_guard lock(mu);
+    return memo.emplace(std::move(key), std::move(out)).first->second;
 }
 
 std::vector<Priced> rank(const Card& card, const Call& call, const Settings& s) {

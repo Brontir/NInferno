@@ -6,6 +6,7 @@
 #include "ops/common/route_probe.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/generic/route_table.h"
 #include "ops/route_pins.h"
 
@@ -119,23 +120,23 @@ std::optional<RouteAnswer> volta_hmma(const Ask& ask, const Problem& problem,
     return std::nullopt;
 }
 
-// The analyzer's ranked routes of a decode or verify call (T 1-8; routes/pick "ranked",
-// tools/route_pick/analyzer.py over this board's facts and the build's kernel facts): the first
+// The analyzer's ranked routes of a decode or verify call (T 1-8; route_analyzer.h device_routes,
+// priced on this board's facts and the build's kernel facts at the call, any shape): the first
 // route of the call's list its policy, profile and build admit, as Predicted evidence. It answers
 // ahead of the route tables, the dense tuner's entry and the rules (vec, R8, MMQ verify, rmma):
-// at these widths the analyzer is the one decision source where the board has a file. A prefill
-// call (the prefill profile, whatever its width) and a list none of whose routes is admitted fall
-// through to the authorities below.
+// at these widths the analyzer is the one decision source on every board it has facts for and
+// does not hold. A prefill call (the prefill profile, whatever its width) and a list none of whose
+// routes is admitted fall through to the authorities below.
 std::optional<RouteAnswer> analyzer_entry(const Ask& ask, const Problem& problem,
                                           const Weight& weight) {
     if (ask.prefill()) return std::nullopt;
-    for (const Route r : table_ranked_routes(problem, ask.tokens)) {
+    for (const Route r : route_analyzer::device_routes(problem, ask.tokens)) {
         if (route_admits(r, weight, problem.policy) && profile_admits(r, ask, &weight)) {
             Evidence e;
             e.kind     = Evidence::Kind::Predicted;
             e.ranker   = Evidence::Ranker::None;
             e.source   = "analyzer";
-            e.donor    = "route-pick";
+            e.donor    = "route-pick"; // the route-pick law (tools/route_pick), as the T 9-32 bands
             e.distance = 0;
             return RouteAnswer{r, std::move(e)};
         }
