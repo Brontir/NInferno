@@ -593,6 +593,79 @@ def main() -> int:
                  and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in result.stdout
                  and "chat_template.jinja" in notes and "generation_config.json" in notes
                  and "tokenizer.json" not in notes)
+            # A base snapshot with tokenizer_config.json but no tokenizer.json (#1218: a cache that
+            # once fetched the base's config files only): the pair is not mixed with the GGUF's
+            # rebuilt tokenizer.json; both are rebuilt from the GGUF metadata.
+            gguf_half, _, _ = synthetic_gguf.qwen_case(work / "qwen-src4", False, None, 33, rebuilt=True,
+                                                       base_model="https://huggingface.co/org/qwen-base-half")
+            hub.add_repo("org/qwen-base-half", {"tokenizer_config.json": base_files["tokenizer_config.json"],
+                                                "config.json": base_files["config.json"]})
+            hub.add_repo("org/qwen-gguf4", {"model-Q8_0.gguf": gguf_half.read_bytes()})
+            half = subprocess.run([str(native), "--fetch", "org/qwen-gguf4", "--cache", str(work / "cache-e2e")],
+                                  cwd=repository, capture_output=True, text=True, env=environment)
+            half_out = (work / "cache-e2e" / "models--org--qwen-gguf4" / "ninferno" /
+                        "c0ffee0123456789abcdef0123456789abcdef01" / "model-Q8_0.qwen3_5_bf16.ninferno")
+            half_report = (json.loads(Path(str(half_out) + ".conversion.json").read_text(encoding="utf-8"))
+                           if half_out.exists() else {})
+            half_notes = " ".join(half_report.get("resource_notes", []))
+            case("a base without tokenizer.json gives neither tokenizer file (#1218)",
+                 half.returncode == 0
+                 and "base model org/qwen-base-half has no tokenizer.json" in half.stdout
+                 and "tokenizer files from the base model" not in half.stdout
+                 and "tokenizer.json: rebuilt" in half_notes and "tokenizer_config.json: rebuilt" in half_notes)
+            if half.returncode:
+                errors.append(half.stderr[-1500:])
+            # Another model's tokenizer.json beside the GGUF (the convert drops it): the base gives
+            # the pair, not tokenizer_config.json alone beside a rebuilt tokenizer.json.
+            gguf_foreign, _, _ = synthetic_gguf.qwen_case(work / "qwen-src5", False, None, 34, rebuilt=True,
+                                                          base_model="https://huggingface.co/org/qwen-base")
+            foreign = json.dumps({"model": {"vocab": {f"x{i}": i for i in range(8)}}, "added_tokens": []}).encode()
+            hub.add_repo("org/qwen-gguf5", {"model-Q8_0.gguf": gguf_foreign.read_bytes(), "tokenizer.json": foreign,
+                                            "chat_template.jinja": b"{{ 'another model' }}"})
+            beside = subprocess.run([str(native), "--fetch", "org/qwen-gguf5", "--cache", str(work / "cache-e2e")],
+                                    cwd=repository, capture_output=True, text=True, env=environment)
+            beside_out = (work / "cache-e2e" / "models--org--qwen-gguf5" / "ninferno" /
+                          "c0ffee0123456789abcdef0123456789abcdef01" / "model-Q8_0.qwen3_5_bf16.ninferno")
+            beside_report = (json.loads(Path(str(beside_out) + ".conversion.json").read_text(encoding="utf-8"))
+                             if beside_out.exists() else {})
+            beside_notes = " ".join(beside_report.get("resource_notes", []))
+            case("another model's files beside the GGUF: the base gives the tokenizer pair, the GGUF the "
+                 "template (#1218)",
+                 beside.returncode == 0
+                 and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in beside.stdout
+                 and "chat_template.jinja: rebuilt" in beside_notes)
+            if beside.returncode:
+                errors.append(beside.stderr[-1500:])
+            # tokenizer_config.json alone beside the GGUF (codex on #1225): the base gives both
+            # members, its config replacing the one beside, so the pair is of one source.
+            gguf_cfg, _, _ = synthetic_gguf.qwen_case(work / "qwen-src6", False, None, 34, rebuilt=True,
+                                                      base_model="https://huggingface.co/org/qwen-base")
+            hub.add_repo("org/qwen-gguf6", {"model-Q8_0.gguf": gguf_cfg.read_bytes(),
+                                            "tokenizer_config.json": base_files["tokenizer_config.json"]})
+            lone = subprocess.run([str(native), "--fetch", "org/qwen-gguf6", "--cache", str(work / "cache-e2e")],
+                                  cwd=repository, capture_output=True, text=True, env=environment)
+            case("tokenizer_config.json alone beside the GGUF: the base gives the pair (#1218)",
+                 lone.returncode == 0
+                 and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in lone.stdout)
+            if lone.returncode:
+                errors.append(lone.stderr[-1500:])
+            # The same with a base that lacks tokenizer.json (Opus on #1225): the base gives neither,
+            # and the lone config beside is not read either: both are rebuilt from the GGUF.
+            gguf_cfg2, _, _ = synthetic_gguf.qwen_case(work / "qwen-src7", False, None, 34, rebuilt=True,
+                                                       base_model="https://huggingface.co/org/qwen-base-half")
+            hub.add_repo("org/qwen-gguf7", {"model-Q8_0.gguf": gguf_cfg2.read_bytes(),
+                                            "tokenizer_config.json": base_files["tokenizer_config.json"]})
+            lone2 = subprocess.run([str(native), "--fetch", "org/qwen-gguf7", "--cache", str(work / "cache-e2e")],
+                                   cwd=repository, capture_output=True, text=True, env=environment)
+            lone2_out = (work / "cache-e2e" / "models--org--qwen-gguf7" / "ninferno" /
+                         "c0ffee0123456789abcdef0123456789abcdef01" / "model-Q8_0.qwen3_5_bf16.ninferno")
+            lone2_notes = " ".join(json.loads(Path(str(lone2_out) + ".conversion.json").read_text(encoding="utf-8"))
+                                   .get("resource_notes", []) if lone2_out.exists() else [])
+            case("tokenizer_config.json alone beside the GGUF, a base without the pair: both rebuilt (#1218)",
+                 lone2.returncode == 0 and "tokenizer_config.json alone in" in lone2_notes
+                 and "tokenizer.json: rebuilt" in lone2_notes and "tokenizer_config.json: rebuilt" in lone2_notes)
+            if lone2.returncode:
+                errors.append(lone2.stderr[-1500:])
 
             # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
             # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),

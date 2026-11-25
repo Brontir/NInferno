@@ -89,9 +89,16 @@ int shipped_picks() {
     ninferno::ops::set_route_table_dir("");
     const auto dir = ninferno::path_from_utf8(ninferno::ops::route_table_dir()) / "pick";
     const std::regex pci_re("\"pci_id\": \"(0x[0-9a-fA-F]{4})\"");
+    // An entry with T 9-32 bands (after its ranked lists, where it has them), and one with ranked
+    // lists (T 1-8): the problem, the first band's width and its route.
     const std::regex entry_re(R"re("format": "([a-z0-9_]+)",\s*"compute": "a16",\s*)re"
                               R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
-                              R"re(\s*"bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
+                              R"re(\s*(?:"ranked": [^}]*?,\s*)?)re"
+                              R"re("bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
+    const std::regex ranked_re(
+        R"re("format": "([a-z0-9_]+)",\s*"compute": "a16",\s*)re"
+        R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
+        R"re(\s*"ranked": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*\[\s*"([^"]+)")re");
     int files = 0;
     // The file and its board for the refusals and the gap check below: of the files with two
     // entries or more, the first by name (a directory's order is the filesystem's: one stand
@@ -105,11 +112,21 @@ int shipped_picks() {
         const std::string text((std::istreambuf_iterator<char>(in)),
                                std::istreambuf_iterator<char>());
         const std::string name = f.path().filename().string();
-        std::smatch m, e;
-        if (!std::regex_search(text, m, pci_re) || !std::regex_search(text, e, entry_re)) {
-            failures += check(false, name + " names its board and has an entry");
+        std::smatch m, e, r;
+        // Every file holds ranked lists (every class of an analyzer architecture) but a held chip's
+        // (gen.py HELD_CHIPS: AD102, #1211; AD106 / GA106, #1224; TU102 / TU104 / TU106, #1183),
+        // which holds none; bands only the classes gen.py writes them for.
+        const bool held = name.rfind("ad102-", 0) == 0 || name.rfind("ad106-", 0) == 0 ||
+                          name.rfind("ga106-", 0) == 0 || name.rfind("tu102-", 0) == 0 ||
+                          name.rfind("tu104-", 0) == 0 || name.rfind("tu106-", 0) == 0;
+        const bool has_ranked = std::regex_search(text, r, ranked_re);
+        if (!std::regex_search(text, m, pci_re) || has_ranked == held) {
+            failures += check(false, name + (held ? " names its board and has no ranked entry (a "
+                                                    "held chip, gen.py HELD_CHIPS)"
+                                                  : " names its board and has a ranked entry"));
             continue;
         }
+        const bool has_bands = std::regex_search(text, e, entry_re);
         const auto id = static_cast<std::uint32_t>(std::stoul(m[1].str(), nullptr, 16));
         const board_registry::BoardRow* row = board_registry::find(id);
         if (row == nullptr) {
@@ -127,7 +144,8 @@ int shipped_picks() {
              it != std::sregex_iterator() && entry_count < 2; ++it) {
             ++entry_count;
         }
-        if (entry_count >= 2 && (first_name.empty() || name < first_name)) {
+        // The refusals below edit a ranked entry: a held chip's file has none.
+        if (!held && entry_count >= 2 && (first_name.empty() || name < first_name)) {
             first_name = name;
             first_text = text;
             first_id   = id;
@@ -138,16 +156,39 @@ int shipped_picks() {
                       << '\n';
             failures +=
                 check(s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
-                          s.predicted_entries > 0 && !s.predicted_sha256.empty(),
+                          s.predicted_entries > 0 &&
+                          (held ? s.ranked_entries == 0 : s.ranked_entries > 0) &&
+                          !s.predicted_sha256.empty(),
                       name + " is read as " + ninferno::device_class().id() +
-                          "'s predicted bands: " + s.message);
+                          "'s predicted bands and ranked lists: " + s.message);
+            const auto problem_of = [](const std::smatch& x) {
+                return generic::Problem{
+                    ninferno::find_route(x[1].str()).value_or(ninferno::QType::BF16),
+                    ninferno::ops::LinearPolicy::A16Only, std::stoi(x[3].str()),
+                    std::stoi(x[4].str()),
+                    x[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
+                    : x[2].str() == "add"  ? generic::Epilogue::AddResidual
+                                           : generic::Epilogue::Store};
+            };
+            if (!held) {
+                // The first ranked entry's first width lists its first route first; none under
+                // the Legacy policy.
+                const auto pr     = problem_of(r);
+                const int width   = std::stoi(r[5].str());
+                const auto routes = generic::table_ranked_routes(pr, width);
+                failures +=
+                    check(ninferno::find_route(r[1].str()) && !routes.empty() &&
+                              generic::route_name(routes.front()) == r[6].str(),
+                          name + ": its first ranked entry lists " + r[6].str() + " first, not " +
+                              (routes.empty() ? std::string("none")
+                                              : generic::route_name(routes.front())));
+                const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
+                failures += check(generic::table_ranked_routes(pr, width).empty(),
+                                  name + ": under --route-policy legacy no ranked list is read");
+            }
+            if (!has_bands) continue;
             const auto q = ninferno::find_route(e[1].str());
-            const generic::Problem p{q.value_or(ninferno::QType::BF16),
-                                     ninferno::ops::LinearPolicy::A16Only, std::stoi(e[3].str()),
-                                     std::stoi(e[4].str()),
-                                     e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
-                                     : e[2].str() == "add"  ? generic::Epilogue::AddResidual
-                                                            : generic::Epilogue::Store};
+            const generic::Problem p = problem_of(e);
             // A band from T 17 (#785) answers the int8 calls the table stands aside for, read by
             // table_predicted_answer whatever the board's table holds; a T 9-16 band answers in
             // the table's gaps (table_route_answer).
@@ -199,7 +240,8 @@ int shipped_picks() {
             }
         } const removed{tmp};
 
-        const auto refused_with = [&](const std::string& what, const std::string& text) {
+        const auto refused_with = [&](const std::string& what, const std::string& text,
+                                      const std::string& why = std::string()) {
             std::filesystem::remove_all(tmp);
             std::filesystem::create_directories(tmp / "pick");
             for (const auto& t : std::filesystem::directory_iterator(routes)) {
@@ -213,9 +255,12 @@ int shipped_picks() {
             try {
                 (void)ninferno::ops::route_table_status();
             } catch (const std::runtime_error& e) {
-                refused = std::string(e.what()).find(first_name) != std::string::npos;
+                const std::string msg = e.what();
+                refused               = msg.find(first_name) != std::string::npos &&
+                          (why.empty() || msg.find(why) != std::string::npos);
             }
-            failures += check(refused, first_name + " " + what + " is refused, naming the file");
+            failures += check(refused, first_name + " " + what + " is refused, naming the file" +
+                                           (why.empty() ? std::string() : " (" + why + ")"));
         };
         refused_with("as another class's file",
                      std::regex_replace(first_text, std::regex(R"re("class": "[^"]+")re"),
@@ -230,6 +275,24 @@ int shipped_picks() {
             // The first entry's T 17-32 band widened to 40: no overlap, so the limit refuses it.
             std::regex_replace(first_text, std::regex(R"re(\[\s*17,\s*32,)re"), R"re([17, 40,)re",
                                std::regex_constants::format_first_only));
+        refused_with(
+            "with a ranked list past T 8",
+            // A list at T 9 ahead of the first entry's own (no overlap: the limit refuses it).
+            std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
+                               R"re("ranked": [[9, 9, ["rmma.m1.n1.w1x4"]], )re",
+                               std::regex_constants::format_first_only));
+        // At T 1 (not past T 8, which the limit refuses first): the refusal must be the empty
+        // list's.
+        refused_with("with an empty ranked list",
+                     std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
+                                        R"re("ranked": [[1, 1, []], )re",
+                                        std::regex_constants::format_first_only),
+                     "an empty ranked list");
+        refused_with("with a band triple's route where a list belongs",
+                     std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
+                                        R"re("ranked": [[1, 1, "rmma.m1.n1.w1x4"], )re",
+                                        std::regex_constants::format_first_only),
+                     "[t_min, t_max, [route, ...]]");
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a

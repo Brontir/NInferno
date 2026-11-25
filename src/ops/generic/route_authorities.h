@@ -42,6 +42,14 @@
 // (#785): an int8 call of T 17-32 outside the prefill profile (a8_wide_call), which skips the
 // table's A16 entries, takes the band (sm_89 files only) whatever the table holds, ahead of the
 // cost model and below this board's own tuned W4A8 band of the width (auto_answer).
+//
+// The analyzer at T 1-8 (the switch to one decision source, tools/route_pick/README.md). The same
+// file's ranked lists (tools/route_pick/analyzer.py) answer every decode and verify call of T 1-8
+// outside the prefill profile, on the board the file was priced for, at any distance from a
+// table: the select list's last authority ("analyzer", after the pins and Volta's fixed routes)
+// takes the first route of the call's list that its policy, profile and build admit, as Predicted.
+// The route tables, the dense tuner and the rules answer those widths only where the board has no
+// file, the problem no list, or no route of the list is admitted.
 
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"

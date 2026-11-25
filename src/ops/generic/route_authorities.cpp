@@ -119,12 +119,37 @@ std::optional<RouteAnswer> volta_hmma(const Ask& ask, const Problem& problem,
     return std::nullopt;
 }
 
+// The analyzer's ranked routes of a decode or verify call (T 1-8; routes/pick "ranked",
+// tools/route_pick/analyzer.py over this board's facts and the build's kernel facts): the first
+// route of the call's list its policy, profile and build admit, as Predicted evidence. It answers
+// ahead of the route tables, the dense tuner's entry and the rules (vec, R8, MMQ verify, rmma):
+// at these widths the analyzer is the one decision source where the board has a file. A prefill
+// call (the prefill profile, whatever its width) and a list none of whose routes is admitted fall
+// through to the authorities below.
+std::optional<RouteAnswer> analyzer_entry(const Ask& ask, const Problem& problem,
+                                          const Weight& weight) {
+    if (ask.prefill()) return std::nullopt;
+    for (const Route r : table_ranked_routes(problem, ask.tokens)) {
+        if (route_admits(r, weight, problem.policy) && profile_admits(r, ask, &weight)) {
+            Evidence e;
+            e.kind     = Evidence::Kind::Predicted;
+            e.ranker   = Evidence::Ranker::None;
+            e.source   = "analyzer";
+            e.donor    = "route-pick";
+            e.distance = 0;
+            return RouteAnswer{r, std::move(e)};
+        }
+    }
+    return std::nullopt;
+}
+
 constexpr NamedAuthority kSelectAuthorities[] = {
     {"invariant-profile", invariant_profile},
     {"route-probe", route_probe},
     {"volta-tiled", volta_tiled},
     {"route-pin", route_pin},
     {"volta-hmma", volta_hmma},
+    {"analyzer", analyzer_entry},
 };
 
 // ---- auto: the measured answers ---------------------------------------------------------------
@@ -632,6 +657,9 @@ std::optional<Route> predicted_before_tuner(const Problem& problem, const Weight
 bool answered_before_tuner(const Problem& problem, const Weight& weight, std::int32_t tokens,
                            bool prefill, Route ranked) {
     const Ask asked = nvfp4_promoted(ask_below_profiles(tokens, prefill), problem, weight);
+    // The analyzer's list answers in the select list, ahead of the tuner's entry: its widths are
+    // not timed.
+    if (analyzer_entry(asked, problem, weight)) return true;
     // auto_answer's order: the half-L2 rule, then the table, then the tuner's entry.
     if (nvfp4_half_l2(asked, problem, weight)) return true;
     // With a native BF16 MMA the MMQ verify rule is measured end to end at rounds of several

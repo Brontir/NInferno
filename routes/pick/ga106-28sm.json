@@ -1,35 +1,24 @@
 {
- "schema": "ninferno-route-pick/1",
+ "schema": "ninferno-route-pick/2",
  "gpu": {
   "class": "ga106:28sm",
   "board": "GeForce RTX 3060 Lite Hash Rate",
   "pci_id": "0x2504"
  },
- "source": "tools/route_pick/gen.py: pick.py over the facts below, nothing measured on this card",
+ "source": "tools/route_pick/gen.py: analyzer.py (ranked, T 1-8) and pick.py (bands, T 9-32) over the facts below, nothing measured on this card",
  "inputs": {
   "src/core/data/gpu_facts.json": "beb9d18a93d7ab298370bcfe5998ad7f18afe2cf24b19efeca2f7787d35d596d",
   "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
   "src/core/data/sm_rate_facts.json": "21bea588f9c7ef2b61b07fe1cbf111eda940edc882961737df278579271c0831",
   "src/ops/generic/data/kernel_facts/sm_86.txt": "40f94d401686eb7e6f86677892879106eece953f5340d87eee4f5ad6f342568d",
+  "tools/route_pick/analyzer.py": "360682ca6c9935d94048b185d34985da768fda11d7dd3413ffbc65f4fa8c51a7",
+  "tools/route_pick/analyzer_facts.py": "2355f86358b4ca8f1abc78cfa114ba374a7c8cb8284736c0252ede6189cdd12d",
   "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
-  "tools/route_pick/gen.py": "90181088a3b61edfe19b6cecb3cc2a78ec3e3f0ea352569b47bced90c01ad4fc",
+  "tools/route_pick/gen.py": "19512d868e958f5f47992f8997a6a11a9f0cc7ea4ad23dac92c29143f1424cda",
   "src/ops/generic/ggml_mmq/ggml_mmq.h": "60bd7827baaf3023467036f58676d993c166f83230576811cf66bbfc87d8f2f1"
  },
  "entries": [
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 2048,
-   "k": 3840,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w2x2"
-    ]
-   ]
-  }
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 2048, "k": 3840, "bands": [[9, 16, "rmma.m1.n2.w2x2"]]}
  ]
 }
