@@ -20,8 +20,8 @@ Nothing is measured on the card.
 - `analyzer.py` (with `analyzer_facts.py`) is the analyzer of T 1-8, rounds 15-20: the same inputs plus the launch,
   DRAM-latency and narrow-load facts, one price per route of ggml_vec, r8, ggml_mmq and every rmma schedule, and on
   sm_70 the Volta substitutes once their kernel facts (sections vhmma / vgemv / vgemvr of `sm_70.txt`) are committed;
-  until then those routes have no price there. `rank()` lists the priced routes cheapest first. The engine does not read it yet; it
-  will replace the T 1-8 route-table entries and rules (vec, R8, rmma) once `gen.py` writes its ranked lists.
+  until then those routes have no price there. `rank()` lists the priced routes cheapest first; `gen.py` writes its
+  lists (T 1-8, below), which the engine answers those widths by.
   `tests/test_route_analyzer.py` (ctest `ninferno_route_analyzer_test`) checks that every A16 release shape at
   T 1-8 has a priced route on sm_75, sm_86, sm_89 and sm_120a.
 - `gen.py` writes the files. `gen.py --check` exits 1 when a file differs from what the facts give now; it runs as
@@ -38,6 +38,23 @@ only those gaps (the problems of its capability's other tables, the add epilogue
 there are none (the RTX 2080 Ti, the only sm_75 table). Such an answer is
 never demoted and never claims a shape-owned problem. An explicit `--route-table` stands alone and reads no overlay,
 and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
+
+## T 1-8: the analyzer's ranked lists (the switch to one decision source)
+Every class of sm_75, sm_86, sm_89 and sm_120a with tensor cores gets a file, the tabled boards and the boards within
+`kCarryDistance` of a table included (72 today; schema `ninferno-route-pick/2`). Each entry holds `ranked`, the
+widths T 1-8 as runs `[t_min, t_max, [route, ...]]` of `analyzer.rank()` over the repo's facts: every route the analyzer
+prices for the call, cheapest first, cut after the first register-MMA schedule (an A16 route every policy admits). The
+problems are every A16 entry of the capability's route tables, all three epilogues; a width with no priced route is
+left out. The T 9-32 `bands` keep the classes and widths above.
+
+The engine (`route_table.cpp` `table_ranked_routes`, `route_authorities.cpp` `analyzer_entry`) reads the lists on the
+board the file was priced for, under `--route-policy evidence`, at any distance from a table. The select list's last
+authority, `analyzer` (after the route probe, the pins and Volta's fixed routes), takes the first route of the call's
+list that its policy (exact activations refuse the int8 routes ggml_vec, r8, ggml_mmq), profile and build admit, as
+evidence `predicted`. It answers ahead of the route tables, the dense tuner and the rules (vec, R8, MMQ verify, rmma);
+the dense tuner does not time those widths. A prefill call, a problem with no list and a list with no admitted route
+fall through to the older authorities. sm_70 has no file: Volta's HMMA authority answers first there, and the
+analyzer's Volta prices wait for the substitutes' kernel facts.
 
 ## T 17-32 on sm_89 (#785)
 On compute capability 8.9 (`NARROW_CC`) every class's file also holds the bands of T 17-32 (`NARROW_HI`), on tabled
