@@ -75,15 +75,14 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
     }
     const std::int32_t T = n / B;
     const auto H = c_.hidden_size, D = c_.head_dim, Hq = c_.query_heads, Hkv = c_.kv_heads,
-               Dr   = c_.rel_width;
-    const auto KV   = D * Hkv;
-    const auto& W   = model_.weights();
+               Dr = c_.rel_width;
+    const auto KV = D * Hkv;
+    const auto& W = model_.weights();
     // The call's stream planes, in `work` for the call (the caller's scope frees them).
-    const Tensor planes =
-        work.alloc(DType::BF16, {H, n * (kBlocks + max_blocks_ + max_bank_)});
-    const auto P = [&](std::int32_t index) {
+    const Tensor planes = work.alloc(DType::BF16, {H, n * (kBlocks + max_blocks_ + max_bank_)});
+    const auto P        = [&](std::int32_t index) {
         return Tensor(static_cast<__nv_bfloat16*>(planes.data) + std::size_t(index) * H * n,
-                      DType::BF16, {H, n});
+                             DType::BF16, {H, n});
     };
     const auto tmp  = [&](std::int32_t rows) { return work.alloc(DType::BF16, {rows, n}); };
     const auto copy = [&](const Tensor& from, Tensor to) {

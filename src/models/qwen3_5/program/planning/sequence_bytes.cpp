@@ -514,9 +514,8 @@ PersistentLayout inkling2_layout(const StateShape& shape, const SequencePlanImpl
                      .kv_storage                = KvCacheStorage::BFloat16,
                      .kv_table_rows             = static_cast<std::int32_t>(plan.max_concurrency),
                      .text_physical_page_groups = plan.main_page_groups,
-                     .layer_storage             = head_major_pool(KvCacheStorage::BFloat16,
-                                                                  shape.head_dim)
-                                          .layer_storage,
+                     .layer_storage =
+                         head_major_pool(KvCacheStorage::BFloat16, shape.head_dim).layer_storage,
                      .plane_order = PagedKVPlaneOrder::HeadMajor,
                  });
     out.state_images = qwen3_5::plan_state_image_device_pool(
