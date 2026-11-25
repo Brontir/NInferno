@@ -997,6 +997,28 @@ int inkling2() {
     failures += same(f.model.state.kv_heads, 8, "inkling2 kv heads");
     failures += same(f.model.state.window, 1024U, "inkling2 window");
     failures += same(f.model.recurrent_conv_bytes, 48ULL * 3 * 6656 * 4, "inkling2 conv bytes");
+    // The same model from its GGUF header (llama.cpp's inkling2 keys).
+    json swa = json::array();
+    for (int i = 0; i < 24; ++i) { swa.push_back(i % 6 != 5); }
+    const json md = {{"general.architecture", "inkling2"},
+                     {"inkling2.block_count", 24},
+                     {"inkling2.context_length", 262144},
+                     {"inkling2.embedding_length", 2304},
+                     {"inkling2.vocab_size", 201088},
+                     {"inkling2.attention.head_count", 16},
+                     {"inkling2.attention.head_count_kv", 8},
+                     {"inkling2.attention.key_length", 128},
+                     {"inkling2.attention.value_length", 128},
+                     {"inkling2.attention.sliding_window", 1024},
+                     {"inkling2.attention.sliding_window_pattern", swa},
+                     {"inkling2.loop.start", 6},
+                     {"inkling2.loop.end", 18},
+                     {"inkling2.loop.count", 3}};
+    const auto g = pr::plan_facts_of_gguf_metadata(md, 1);
+    failures += same(g.model.offline_reason, std::string(), "inkling2 gguf plans");
+    failures += same(g.model.state.full_layers, 8U, "inkling2 gguf full visits");
+    failures += same(g.model.state.sliding_layers, 40U, "inkling2 gguf sliding visits");
+    failures += same(g.model.state.conv_channels, 6656, "inkling2 gguf convolution channels");
     return failures;
 }
 

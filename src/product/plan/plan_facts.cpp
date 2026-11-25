@@ -406,6 +406,28 @@ std::vector<bool> gguf_sliding(const json& metadata, const std::string& arch, st
     return out;
 }
 
+// Inkling 2's state is a slot a visit of its looped schedule (models/inkling2/config.cpp
+// visit_schedule): layers [0, core_start) once, the core `passes` times, the rest once. The state
+// counts those visits by kind (8 full and 40 sliding for Inkling-2-Mini's 24 layers); the
+// parameter counts keep the physical layers. `full[i]`: layer i attends over the whole context.
+void inkling2_visits(const std::vector<bool>& full, std::uint32_t start, std::uint32_t end,
+                     std::uint32_t passes, double heads, double kv, double dim, Geometry& g) {
+    std::uint32_t full_visits = 0, sliding_visits = 0;
+    for (std::size_t i = 0; i < full.size(); ++i) {
+        const std::uint32_t times = i >= start && i < end ? std::max<std::uint32_t>(1, passes) : 1;
+        (full[i] ? full_visits : sliding_visits) += times;
+    }
+    g.full_layers             = full_visits;
+    g.sliding_layers          = sliding_visits;
+    g.full_kv_total           = u32(kv * full_visits);
+    g.sliding_kv_total        = u32(kv * sliding_visits);
+    g.full_attending          = full_visits;
+    g.sliding_attending       = sliding_visits;
+    g.full_attention_width    = heads * 2 * dim * full_visits;
+    g.sliding_attention_width = heads * 2 * dim * sliding_visits;
+    g.conv_channels           = static_cast<std::int32_t>(2 * kv * dim + 2 * g.hidden);
+}
+
 // `has_tensor` (the file's tensor table, when read): a layer without its own value projection keeps
 // its keys as its values (Gemma 4's full layers, attention_k_eq_v: gguf_model.cpp).
 Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::string&)>& has_tensor = nullptr) {
@@ -498,6 +520,13 @@ Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::st
     g.shared_ffn   = number(md, p + "expert_shared_feed_forward_length") *
                    std::max(1.0, number(md, p + "expert_shared_count", 1));
     g.dense_beside_experts = arch == "gemma4";
+    if (g.model_type == "inkling2_text") {
+        std::vector<bool> full(layers);
+        for (std::size_t i = 0; i < layers; ++i) { full[i] = !sliding[i]; }
+        inkling2_visits(full, u32(number(md, p + "loop.start")), u32(number(md, p + "loop.end")),
+                        u32(number(md, p + "loop.count", 1)), first_heads, layers ? kv[0] : 0, key,
+                        g);
+    }
     return g;
 }
 
@@ -869,36 +898,6 @@ private:
 
 // ---- config.json and the artifact's text config.
 
-// Inkling 2's state is a slot a visit of its looped schedule (models/inkling2/config.cpp
-// visit_schedule): layers [0, core_start) once, the core num_passes times, the rest once. The
-// state counts those visits by kind (8 full and 40 sliding for Inkling-2-Mini's 24 layers); the
-// parameter counts keep the physical layers.
-void inkling2_visits(const json& c, const std::vector<std::string>& kinds, Geometry& g) {
-    std::uint32_t start = 0, end = 0, passes = 1;
-    if (const auto loop = c.find("loop_config"); loop != c.end() && loop->is_object()) {
-        start  = u32(number(*loop, "core_start"));
-        end    = u32(number(*loop, "core_end"));
-        passes = std::max<std::uint32_t>(1, u32(number(*loop, "num_passes", 1)));
-    }
-    std::uint32_t full = 0, sliding = 0;
-    for (std::size_t i = 0; i < kinds.size(); ++i) {
-        const std::uint32_t times = i >= start && i < end ? passes : 1;
-        (kinds[i] == "full_attention" ? full : sliding) += times;
-    }
-    const double kv           = number(c, "num_key_value_heads");
-    const double dim          = number(c, "head_dim");
-    g.full_layers             = full;
-    g.sliding_layers          = sliding;
-    g.full_kv_total           = u32(kv * full);
-    g.sliding_kv_total        = u32(kv * sliding);
-    g.full_attending          = full;
-    g.sliding_attending       = sliding;
-    const double heads        = number(c, "num_attention_heads");
-    g.full_attention_width    = heads * 2 * dim * full;
-    g.sliding_attention_width = heads * 2 * dim * sliding;
-    g.conv_channels           = static_cast<std::int32_t>(2 * kv * dim + 2 * g.hidden);
-}
-
 Geometry geometry_of_config(const json& config) {
     Geometry g;
     if (const auto it = config.find("architectures");
@@ -1076,7 +1075,17 @@ Geometry geometry_of_config(const json& config) {
     }
     g.ffn_matrices = starts_with(type, "nemotron_h") || g.model_type == "nemotron_h" ? 2 : 3;
     g.dense_beside_experts = g.model_type == "gemma4_text";
-    if (g.model_type == "inkling2_text") { inkling2_visits(c, kinds, g); }
+    if (g.model_type == "inkling2_text") {
+        std::vector<bool> full(kinds.size());
+        for (std::size_t i = 0; i < kinds.size(); ++i) { full[i] = kinds[i] == "full_attention"; }
+        std::uint32_t start = 0, end = 0, passes = 1;
+        if (const auto loop = c.find("loop_config"); loop != c.end() && loop->is_object()) {
+            start  = u32(number(*loop, "core_start"));
+            end    = u32(number(*loop, "core_end"));
+            passes = u32(number(*loop, "num_passes", 1));
+        }
+        inkling2_visits(full, start, end, passes, heads, kv_heads, head_dim, g);
+    }
     return g;
 }
 
@@ -1103,6 +1112,7 @@ std::string plan_model_type_of_gguf(const json& metadata) {
     if (arch == "gemma4") { return "gemma4_text"; }
     if (arch == "gpt-oss" || arch == "qwen3moe") { return "moe_decoder"; }
     if (arch == "nemotron_h_moe") { return "nemotron_h"; }
+    if (arch == "inkling2" || arch == "inkling2_loop") { return "inkling2_text"; }
     if (std::find(std::begin(kDenseGgufArchs), std::end(kDenseGgufArchs), arch) !=
         std::end(kDenseGgufArchs)) {
         return number(metadata, arch + ".expert_count") > 1 ? "moe_decoder" : "dense_decoder";
