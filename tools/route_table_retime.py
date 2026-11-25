@@ -81,17 +81,19 @@ def a16_routes(times, t, wide=None):
             if not r.startswith(NOT_TABLE_ROUTES) and not (wide and r == "ggml_mmq")}
 
 
-def default_route(times, ranker, t):
+def default_route(times, ranker, t, wide=None):
     """The default an a16 band is held to at one count: the ranker where it names a route an A16
     call can run there; where it names an A8 route the table never competes with (W4A8, R8, or
     ggml_mmq at a W4A8 count), the fastest route an A16 call can run there. No ranker, or one
-    that names a table route the grid did not time, gives None: the caller counts a gap."""
+    that names a table route the grid did not time, gives None: the caller counts a gap. `wide`
+    as in a16_routes."""
     if ranker is None:
         return None
-    table = a16_routes(times, t)
+    wide = a8_wide(times, t) if wide is None else wide
+    table = a16_routes(times, t, wide)
     if ranker in table:
         return ranker
-    if ranker.startswith(NOT_TABLE_ROUTES) or (ranker == "ggml_mmq" and a8_wide(times, t)):
+    if ranker.startswith(NOT_TABLE_ROUTES) or (ranker == "ggml_mmq" and wide):
         return min(table, key=table.get) if table else None
     return None
 
@@ -160,20 +162,14 @@ def row_key(r):
     return (r["format"], compute, r["epilogue"], int(r["n"]), int(r["k"]))
 
 
-def load_grid(path, lo, hi, every_route=False):
+def load_grid(path, lo, hi):
+    """Every route a grid timed, per (shape, count)."""
     every = defaultdict(dict)
     for r in csv.DictReader(path.open(encoding="utf-8")):
         t = int(r["T"])
         if lo <= t <= hi:
             every[(row_key(r), t)][r["route"]] = float(r["median_us"])
-    if every_route:
-        return every
-    # The candidates: what an A16 call can run at the count (a16_routes).
-    grid = defaultdict(dict)
-    for (key, t), times in every.items():
-        if routes := a16_routes(times, t):
-            grid[(key, t)] = routes
-    return grid
+    return every
 
 
 def main():
@@ -193,15 +189,23 @@ def main():
     if a.repeat and not a.evidence:
         ap.error("--repeat needs --evidence (the second grid it checks the moves on)")
     lo, hi = (int(x) for x in a.tokens.split("-"))
-    grid = load_grid(a.routes, lo, hi)
-    grid_all = load_grid(a.routes, lo, hi, every_route=True)
+    grid_all = load_grid(a.routes, lo, hi)
     # The evidence grid: every route it timed (the ranker may answer a route no table holds).
     ev_grid, ranker = {}, {}
     if a.evidence:
-        ev_grid = load_grid(a.evidence[0], lo, hi, every_route=True)
+        ev_grid = load_grid(a.evidence[0], lo, hi)
         for r in csv.DictReader(a.evidence[1].open(encoding="utf-8")):
             if lo <= int(r["T"]) <= hi:
                 ranker[(row_key(r), int(r["T"]))] = r["ranker"]
+    # W4A8 admission is the shape's (a8_wide_call: the format, K and the policy), not one grid's:
+    # a grid run without --a8-candidates 1 times no W4A8 (#1206 review). A shape either grid timed
+    # W4A8 at admits it at every count from A8_WIDE_MIN_T, so ggml_mmq is no A16 candidate there
+    # in either grid. The candidates: what an A16 call can run at the count (a16_routes).
+    w4a8_keys = {k for g in (grid_all, ev_grid) for (k, t), times in g.items() if a8_wide(times, t)}
+    grid = defaultdict(dict)
+    for (k, t), times in grid_all.items():
+        if routes := a16_routes(times, t, t >= A8_WIDE_MIN_T and k in w4a8_keys):
+            grid[(k, t)] = routes
     doc = json.loads(a.table.read_text(encoding="utf-8"))
     board = doc.get("gpu", {}).get("class")
     own_keys = board_keys(doc.get("gpu", {}))
@@ -210,6 +214,10 @@ def main():
         if "bands" not in e:
             continue
         key = (e["format"], e["compute"], e.get("epilogue", "store"), e["n"], e["k"])
+
+        def wide(t, key=key):
+            return t >= A8_WIDE_MIN_T and key in w4a8_keys
+
         timed = [t for t in range(lo, hi + 1) if grid.get((key, t))]
         if not timed:
             continue
@@ -218,12 +226,10 @@ def main():
         if not haves:
             continue
         timed = sorted(haves)
-        # A band route an A16 call cannot run where the call may take W4A8 (ggml_mmq at an a8_wide
+        # A band route an A16 call cannot run where the call may take W4A8 (ggml_mmq at a wide
         # count) is a dead entry: no policy reads it (a16_routes), so it is always replaced, timed
-        # or not. Dead is read off the grid (it timed W4A8): a grid run without --a8-candidates 1
-        # times no W4A8 and finds none.
-        dead = {t for t, h in haves.items()
-                if h not in grid[(key, t)] and h == "ggml_mmq" and a8_wide(grid_all[(key, t)], t)}
+        # or not. Wide is the shape's, read off both grids (w4a8_keys, above).
+        dead = {t for t, h in haves.items() if h == "ggml_mmq" and wide(t)}
         untimed = sorted({h for t, h in haves.items() if h not in grid[(key, t)] and t not in dead})
         if untimed:
             # The grid did not time the table's route: it may be absent for a reason (not offered
@@ -297,7 +303,7 @@ def main():
             # counts the first left out); only a timed moved count's row is required.
             for t in sorted({**moved, **filled}):
                 times = ev_grid.get((key, t), {})
-                rk = default_route(times, ranker.get((key, t)), t)
+                rk = default_route(times, ranker.get((key, t)), t, wide(t))
                 if rk in times and best in times:
                     new_rows[t] = [t, round(times[rk], 2), round(times[best], 2)]
             # A count the second grid cannot confirm (no ranker, a ranker it did not time, new or
@@ -318,21 +324,20 @@ def main():
             # than what the call runs without it overrides nothing worth keeping.
             # A filled count the second grid timed is held to the same two tests: the move writes
             # the range's route there too (#1157 review). Its old route is the band's; a dead one
-            # (ggml_mmq where W4A8 may run) or one the second grid did not time is no rival. A
-            # moved count is dead by the first grid (`dead`, above); a filled one, which the first
-            # grid did not time, by the second.
+            # (ggml_mmq where W4A8 may run: `wide`, the shape's) or one the second grid did not
+            # time is no rival.
             def reversed_by_evidence(t, old):
                 times = ev_grid.get((key, t), {})
                 if best not in times:
                     return False
                 if old in times and times[best] > times[old] * (1 + a.margin):
                     return True
-                rk = default_route(times, ranker.get((key, t)), t)
+                rk = default_route(times, ranker.get((key, t)), t, wide(t))
                 return rk in times and times[best] > times[rk] * (1 + a.margin)
 
             def filled_old(u):
                 h = route_at(e["bands"], u)
-                return None if h == "ggml_mmq" and a8_wide(ev_grid.get((key, u), {}), u) else h
+                return None if h == "ggml_mmq" and wide(u) else h
 
             reversed_at = sorted(
                 [t for t in moved if reversed_by_evidence(t, None if t in dead else haves[t])]
@@ -355,11 +360,8 @@ def main():
                 # range's route is within the margin of the second grid's fastest, or still beats
                 # the old route by more than the margin there (a large gain to a route the second
                 # grid puts a little behind another).
-                # Dead is the shape's, not the grid's (#1206 review): a count either grid timed
-                # W4A8 at admits W4A8, so ggml_mmq is no A16 rival there in the second grid either.
                 def ev_a16(t):
-                    ev = ev_grid.get((key, t), {})
-                    return a16_routes(ev, t, a8_wide(ev, t) or a8_wide(grid_all[(key, t)], t))
+                    return a16_routes(ev_grid.get((key, t), {}), t, wide(t))
 
                 def repeats(t, old):
                     times = ev_a16(t)

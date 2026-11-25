@@ -204,20 +204,55 @@ def test_repeat_keeps_an_entry_the_second_grid_shows_as_a_tie(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
+# #1206 review: W4A8 admission is the shape's, read off both grids. ggml_mmq is dead at T17 where
+# the first grid timed W4A8; a second grid that timed none (ggml_mmq 90 there) does not revive it.
+W4A8_ROWS = ([(17, r, us) for r, us in (("n1", 200), ("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))]
+             + [(t, r, us) for t in (18, 19) for r, us in (("n1", 103), ("n2", 100), ("w4a8.64x64", 50))])
+W4A8_TABLE = [[1, 17, "ggml_mmq"], [18, 19, "n1"], [20, 16777216, "n2"]]
+NO_W4A8_SECOND = ([(17, "n2", 100.0), (17, "ggml_mmq", 90.0)]
+                  + [(t, r, us) for t in (18, 19) for r, us in (("n1", 101.5), ("n2", 100.0))])
+MOVED_TO_N2 = [[1, 16, "ggml_mmq"], [17, 16777216, "n2"]]
+
+
 def test_repeat_dead_counts_stay_dead_in_the_second_grid(tmp_path):
-    # #1206 review: ggml_mmq is dead at T17 (the first grid timed W4A8 there: the shape admits
-    # it). The second grid timed no W4A8, yet ggml_mmq (99.2) is no A16 rival there either. The
-    # live move at T 18-19 (n1 1.5 % behind n2 in the second grid, margin 1 %) goes through, and
-    # the dead T17 entry moves with it.
-    rows = [(17, r, us) for r, us in (("n1", 200), ("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))]
-    rows += [(t, r, us) for t in (18, 19) for r, us in (("n1", 103), ("n2", 100), ("w4a8.64x64", 50))]
-    second = ([(17, "n2", 100.0), (17, "ggml_mmq", 99.2)]
-              + [(t, r, us) for t in (18, 19) for r, us in (("n1", 101.5), ("n2", 100.0))],
-              [(t, "n2") for t in (17, 18, 19)])
-    table = [[1, 17, "ggml_mmq"], [18, 19, "n1"], [20, 16777216, "n2"]]
-    bands, _ = run(tmp_path, table, rows, margin="0.01", evidence=[], second=second, repeat=True,
+    # The live move at T 18-19 (n1 1.5 % behind n2 in the second grid, margin 1 %) repeats, and
+    # the dead T17 entry moves with it: neither repeats() nor the whole-move test sees ggml_mmq.
+    bands, _ = run(tmp_path, W4A8_TABLE, W4A8_ROWS, margin="0.01", evidence=[],
+                   second=(NO_W4A8_SECOND, [(t, "n2") for t in (17, 18, 19)]), repeat=True,
                    tokens="17-19")
-    assert bands == [[1, 16, "ggml_mmq"], [17, 16777216, "n2"]]
+    assert bands == MOVED_TO_N2
+
+
+def test_a_ranker_naming_a_dead_ggml_mmq_is_no_default(tmp_path):
+    # The second grid's ranker names ggml_mmq at T17: no A16 call runs it there, so the default is
+    # the fastest A16 route (n2) and the move stands (reversed_by_evidence, the evidence rows).
+    bands, _ = run(tmp_path, W4A8_TABLE, W4A8_ROWS, margin="0.01", evidence=[],
+                   second=(NO_W4A8_SECOND, [(17, "ggml_mmq"), (18, "n2"), (19, "n2")]),
+                   repeat=True, tokens="17-19")
+    assert bands == MOVED_TO_N2
+
+
+def test_a_filled_count_is_dead_by_the_shape(tmp_path):
+    # The first grid times T17 and T19 with W4A8; T18, filled, is dead too, though the second grid
+    # times no W4A8 and has ggml_mmq ahead of n2 there.
+    rows = [(t, r, us) for t in (17, 19)
+            for r, us in (("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))]
+    second = ([(t, "n2", 100.0) for t in (17, 18, 19)] + [(18, "ggml_mmq", 90.0)],
+              [(t, "n2") for t in (17, 18, 19)])
+    bands, _ = run(tmp_path, [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows, evidence=[],
+                   second=second, repeat=True, tokens="17-19")
+    assert bands == MOVED_TO_N2
+
+
+def test_w4a8_in_the_second_grid_kills_ggml_mmq_in_the_first(tmp_path):
+    # The mirror: the first grid timed no W4A8 (ggml_mmq 110 behind n2 100), the second did.
+    rows = [(t, r, us) for t in (17, 18, 19) for r, us in (("n2", 100), ("ggml_mmq", 110))]
+    second = ([(t, r, us) for t in (17, 18, 19)
+               for r, us in (("n2", 100), ("ggml_mmq", 95), ("w4a8.64x64", 50))],
+              [(t, "w4a8.64x64") for t in (17, 18, 19)])
+    bands, _ = run(tmp_path, [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows, evidence=[],
+                   second=second, repeat=True, tokens="17-19")
+    assert bands == MOVED_TO_N2
 
 
 def test_a_borrowed_entry_moves_but_keeps_its_borrowed_rows(tmp_path):
