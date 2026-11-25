@@ -13,7 +13,7 @@
   "src/ops/generic/data/kernel_facts/sm_120a.txt": "c9f8f1d76d6269d9dbee33afaf0c8aca5a049f9fff11c4c0e95a7504f08df959",
   "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
-  "tools/route_pick/gen.py": "257abba949e3d5697bf8381355a052c79e1cf532a14e1f6e68fa9c96445e6eec",
+  "tools/route_pick/gen.py": "44807a1d232fc7244437fcc4f5118d0fae952b5c17536ab4a345b187f0caf50d",
   "src/ops/generic/ggml_mmq/ggml_mmq.h": "60bd7827baaf3023467036f58676d993c166f83230576811cf66bbfc87d8f2f1"
  },
  "entries": [
