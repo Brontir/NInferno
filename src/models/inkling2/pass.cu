@@ -244,9 +244,16 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
         ops::gemma4_kv_append(k.view({D, Hkv, T, B}), vv.view({D, Hkv, T, B}), rows_pos, kv, s);
         Tensor context = tmp(Hq * D);
         Tensor c4      = context.view({D, Hq, T, B});
-        ops::inkling2_attention(q.view({D, Hq, T, B}), r.view({Dr, Hq, T, B}),
-                                sink.view({Hq, T, B}), L.relative_bias, kv, rows_pos,
-                                c_.extent(v.layer), c4, s);
+        {
+            auto scope                = work.scope();
+            const std::size_t scratch = ops::inkling2_attention_scratch_bytes(Hq, Hkv, n);
+            const Tensor part =
+                scratch == 0 ? Tensor{}
+                             : work.alloc(DType::FP32, {static_cast<std::int32_t>(scratch / 4)});
+            ops::inkling2_attention(q.view({D, Hq, T, B}), r.view({Dr, Hq, T, B}),
+                                    sink.view({Hq, T, B}), L.relative_bias, kv, rows_pos,
+                                    c_.extent(v.layer), part, c4, s);
+        }
         see("kqv_out-0", context);
         ops::sigmoid_mul(gate, context, s);
         see("node_83", context);

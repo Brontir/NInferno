@@ -308,8 +308,8 @@ enum class KvLayout { Ring, Images, Paged };
 // own binding), then the last call's queries attend. Ring: one sequence, slot storage with no
 // bindings; Images: two rows, one ring image each; Paged: two rows of a full layer in a page pool,
 // their pages scattered and interleaved.
-int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout) {
-    const int d = 128, hq = 24, hkv = 8, dr = 16, chunk = 3, tokens = 3;
+int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout, int tokens = 3) {
+    const int d = 128, hq = 24, hkv = 8, dr = 16, chunk = 3;
     const int batch = layout == KvLayout::Ring ? 1 : 2;
     const int base  = layout == KvLayout::Paged ? 150 : 62; // the paged rows span three pages
     std::vector<int> last(static_cast<std::size_t>(batch));
@@ -372,7 +372,9 @@ int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout) 
     if (layout != KvLayout::Ring) { cache.rows = Tensor(rows_all.p, DType::I32, {batch}); }
     std::vector<int> positions;
     for (int b = 0; b < batch; ++b) {
-        for (int t = 0; t < tokens; ++t) { positions.push_back(last[std::size_t(b)] - 2 + t); }
+        for (int t = 0; t < tokens; ++t) {
+            positions.push_back(last[std::size_t(b)] - (tokens - 1) + t);
+        }
     }
     auto q    = bf16_values(std::size_t(d) * hq * tokens * batch, seed + 3, -1.5f, 1.5f),
          r    = bf16_values(std::size_t(dr) * hq * tokens * batch, seed + 4, -2, 2);
@@ -385,7 +387,13 @@ int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout) 
         tr(drr.p, DType::BF16, {dr, hq, tokens, batch});
     Tensor ts(ds.p, DType::BF16, {hq, tokens, batch}), tb(db.p, DType::FP32, {dr, extent});
     Tensor tp(dp.p, DType::I32, {tokens, batch}), to(dout.p, DType::BF16, {d, hq, tokens, batch});
-    ops::inkling2_attention(tq, tr, ts, tb, cache, tp, extent, to, nullptr);
+    const std::size_t scratch_bytes = ops::inkling2_attention_scratch_bytes(hq, hkv, tokens * batch);
+    DeviceBuffer scratch(std::max<std::size_t>(scratch_bytes, 4));
+    const Tensor part = scratch_bytes == 0
+                            ? Tensor{}
+                            : Tensor(scratch.p, DType::FP32,
+                                     {static_cast<std::int32_t>(scratch_bytes / 4)});
+    ops::inkling2_attention(tq, tr, ts, tb, cache, tp, extent, part, to, nullptr);
     cuda_synchronize();
     std::vector<double> expected(std::size_t(d) * hq * tokens * batch);
     const double sc = 1.0 / std::sqrt(double(d));
@@ -460,6 +468,8 @@ int main() {
     failures += attention_case(0, 128, 121u, KvLayout::Ring); // every distance biased
     failures += attention_case(8, 8, 131u, KvLayout::Images); // two sequences, a ring image each
     failures += attention_case(0, 64, 141u, KvLayout::Paged); // two sequences in a page pool
+    // 48 queries: enough blocks without key splits (the one-split path writes the output itself).
+    failures += attention_case(0, 64, 151u, KvLayout::Ring, 48);
     std::cout << (failures ? "FAIL" : "OK") << " inkling2\n";
     return failures ? 1 : 0;
 }

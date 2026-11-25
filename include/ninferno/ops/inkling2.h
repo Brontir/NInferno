@@ -131,10 +131,17 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
  * [Dr, Hq, T, B], sink: BF16 [Hq, T, B], bias: FP32 [extent, Dr], positions: device I32 [T, B],
  * out: BF16 [D, Hq, T, B]. The keys and values are a Gemma4KvLayer's BF16 planes (one ring image
  * per batch row, or the paged pool through block tables; gemma4_attention.h), already holding this
- * call's rows (gemma4_kv_append): batch row b reads its binding cache.rows[b]. D <= 128, Dr <= 32.
+ * call's rows (gemma4_kv_append): batch row b reads its binding cache.rows[b]. D <= 128 (a
+ * multiple of 4), Dr <= 32, Hq / Hkv <= 4. A call splits each (key head, column)'s keys over
+ * blocks when its columns alone would not fill the GPU; `scratch` (FP32) holds the splits'
+ * partials, inkling2_attention_scratch_bytes of them (0: one split, no scratch read).
  */
+[[nodiscard]] std::size_t inkling2_attention_scratch_bytes(std::int32_t q_heads,
+                                                           std::int32_t kv_heads,
+                                                           std::int32_t columns);
+
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
                         const Gemma4KvLayer& cache, const Tensor& positions, std::int32_t extent,
-                        Tensor& out, cudaStream_t stream);
+                        const Tensor& scratch, Tensor& out, cudaStream_t stream);
 
 } // namespace ninferno::ops

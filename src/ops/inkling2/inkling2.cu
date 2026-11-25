@@ -9,6 +9,7 @@
 
 #include <cuda_bf16.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -289,89 +290,187 @@ __global__ void prepare_kernel(PrepareParams p) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// attention: one block a (head, query), one warp a key stripe, online softmax per warp
+// attention: a block a (KV group, query column, key split); the group's query heads share each
+// key and value row; a second kernel joins the splits (flash decoding)
 
-constexpr int kAttnWarps = 8;
+constexpr int kAttnWarps    = 4;
+constexpr int kAttnMaxGroup = 4;  // query heads a KV head
+constexpr int kAttnMaxSplit = 16; // key splits a (group, column)
 
 struct AttnParams {
     const __nv_bfloat16 *q, *r, *sink, *k, *v;
     const float* bias;
     const std::int32_t* positions;
     __nv_bfloat16* out;
+    float* part; // splits > 1: [column, Hq, split] partials of (m, z, acc[D])
     detail::Gemma4KvAddress kv;
-    int q_heads, kv_heads, d, dr, extent, window, tokens;
+    int q_heads, kv_heads, d, dr, extent, window, tokens, splits;
 };
 
-// One block a (head, query column, batch row): the batch row's keys through its binding
-// (kv_address.h: a ring image or a page table row).
+constexpr int kAttnPart = 2 + 128; // m, z, acc[128]
+
+__device__ __forceinline__ void load4(const __nv_bfloat16* row, int i, int d, float (&x)[4]) {
+    if (i + 3 < d) {
+        const uint2 w = *reinterpret_cast<const uint2*>(row + i);
+        const __nv_bfloat162 a = *reinterpret_cast<const __nv_bfloat162*>(&w.x);
+        const __nv_bfloat162 b = *reinterpret_cast<const __nv_bfloat162*>(&w.y);
+        x[0] = __low2float(a), x[1] = __high2float(a), x[2] = __low2float(b), x[3] = __high2float(b);
+    } else {
+#pragma unroll
+        for (int j = 0; j < 4; ++j) { x[j] = i + j < d ? __bfloat162float(row[i + j]) : 0.0F; }
+    }
+}
+
+// The batch row's keys through its binding (kv_address.h: a ring image or a page table row). Lane
+// l keeps dims 4l..4l+3 of every head of the group; each warp walks its split's keys two at a
+// time; the block's warps then join, and either write the output (one split) or the partial.
+template <int G>
 __global__ void attention_kernel(AttnParams p) {
-    const int h = blockIdx.x, t = blockIdx.y, b = blockIdx.z, lane = threadIdx.x & 31,
-              warp          = threadIdx.x >> 5;
-    const int g             = h / (p.q_heads / p.kv_heads);
-    const std::int64_t col  = static_cast<std::int64_t>(b) * p.tokens + t;
-    const int pos           = p.positions[col];
-    const int low           = p.window ? max(0, pos - p.window + 1) : 0;
+    const int g = blockIdx.x, col = blockIdx.y, split = blockIdx.z, lane = threadIdx.x & 31,
+              warp = threadIdx.x >> 5;
+    const int b = col / p.tokens, h0 = g * G, i = 4 * lane;
+    const int pos  = p.positions[col];
+    const int low  = p.window ? max(0, pos - p.window + 1) : 0;
+    const int n    = pos - low + 1;
+    const int span = (n + p.splits - 1) / p.splits;
+    const int k0 = low + split * span, k1 = min(pos + 1, k0 + span);
     const float sc          = rsqrtf(static_cast<float>(p.d));
-    const __nv_bfloat16* q  = p.q + (col * p.q_heads + h) * p.d;
-    const __nv_bfloat16* r  = p.r + (col * p.q_heads + h) * p.dr;
     const int binding       = detail::gemma4_kv_binding(p.kv, b);
     const std::int64_t base = detail::gemma4_kv_plane_offset(p.kv, binding) +
                               static_cast<std::int64_t>(g) * p.kv.capacity * p.d;
-    float qv[4], acc[4] = {0, 0, 0, 0};
-    for (int j = 0; j < 4; ++j) {
-        const int i = lane + 32 * j;
-        qv[j]       = i < p.d ? __bfloat162float(q[i]) * sc : 0.0F;
+    float qv[G][4], acc[G][4], rv[G], m[G], z[G];
+#pragma unroll
+    for (int hh = 0; hh < G; ++hh) {
+        const std::int64_t qh = static_cast<std::int64_t>(col) * p.q_heads + h0 + hh;
+        load4(p.q + qh * p.d, i, p.d, qv[hh]);
+#pragma unroll
+        for (int j = 0; j < 4; ++j) { qv[hh][j] *= sc, acc[hh][j] = 0.0F; }
+        // The bias and the sink join the mask, after the scale (llama.cpp folds them into kq_mask).
+        rv[hh] = lane < p.dr ? __bfloat162float(p.r[qh * p.dr + lane]) : 0.0F;
+        m[hh] = -INFINITY, z[hh] = 0.0F;
     }
-    // The bias and the sink join the mask, after the scale (llama.cpp folds them into kq_mask).
-    const float rv = lane < p.dr ? __bfloat162float(r[lane]) : 0.0F;
-    float m = -INFINITY, z = 0;
-    for (int key = low + warp; key <= pos; key += kAttnWarps) {
-        const std::int64_t row =
-            base + static_cast<std::int64_t>(detail::gemma4_kv_slot(p.kv, binding, key)) * p.d;
-        const int dist = pos - key;
-        float s        = 0;
-        for (int j = 0; j < 4; ++j) {
-            const int i = lane + 32 * j;
-            if (i < p.d) { s += qv[j] * __bfloat162float(p.k[row + i]); }
+    for (int key = k0 + 2 * warp; key < k1; key += 2 * kAttnWarps) {
+        const bool two = key + 1 < k1;
+        float kx[2][4], vx[2][4], s[2][G];
+#pragma unroll
+        for (int u = 0; u < 2; ++u) {
+            const int kk = u == 0 || two ? key + u : key;
+            const std::int64_t row =
+                base + static_cast<std::int64_t>(detail::gemma4_kv_slot(p.kv, binding, kk)) * p.d;
+            load4(p.k + row, i, p.d, kx[u]);
+            load4(p.v + row, i, p.d, vx[u]);
+            const int dist = pos - kk;
+            const float bias =
+                dist < p.extent && lane < p.dr ? p.bias[static_cast<std::int64_t>(dist) * p.dr + lane]
+                                               : 0.0F;
+#pragma unroll
+            for (int hh = 0; hh < G; ++hh) {
+                float t = rv[hh] * bias;
+#pragma unroll
+                for (int j = 0; j < 4; ++j) { t += qv[hh][j] * kx[u][j]; }
+                s[u][hh] = t;
+            }
         }
-        if (dist < p.extent && lane < p.dr) {
-            s += rv * p.bias[static_cast<std::int64_t>(dist) * p.dr + lane];
+#pragma unroll
+        for (int u = 0; u < 2; ++u) {
+#pragma unroll
+            for (int hh = 0; hh < G; ++hh) { s[u][hh] = warp_sum(s[u][hh]); }
         }
-        s              = warp_sum(s);
-        const float mn = fmaxf(m, s);
-        const float c = expf(m - mn), e = expf(s - mn);
-        z = z * c + e;
-        for (int j = 0; j < 4; ++j) {
-            const int i = lane + 32 * j;
-            acc[j]      = acc[j] * c + (i < p.d ? e * __bfloat162float(p.v[row + i]) : 0.0F);
+#pragma unroll
+        for (int hh = 0; hh < G; ++hh) {
+            const float s1 = two ? s[1][hh] : -INFINITY;
+            const float mn = fmaxf(m[hh], fmaxf(s[0][hh], s1));
+            const float c = expf(m[hh] - mn), e0 = expf(s[0][hh] - mn), e1 = two ? expf(s1 - mn) : 0.0F;
+            z[hh] = z[hh] * c + e0 + e1;
+#pragma unroll
+            for (int j = 0; j < 4; ++j) { acc[hh][j] = acc[hh][j] * c + e0 * vx[0][j] + e1 * vx[1][j]; }
+            m[hh] = mn;
         }
-        m = mn;
     }
-    __shared__ float sm[kAttnWarps], sz[kAttnWarps], sacc[kAttnWarps][128];
-    if (lane == 0) { sm[warp] = m, sz[warp] = z; }
-    for (int j = 0; j < 4; ++j) {
-        const int i = lane + 32 * j;
-        if (i < p.d) { sacc[warp][i] = acc[j]; }
+    __shared__ float sm[kAttnWarps][G], sz[kAttnWarps][G], sacc[kAttnWarps][G][128];
+#pragma unroll
+    for (int hh = 0; hh < G; ++hh) {
+        if (lane == 0) { sm[warp][hh] = m[hh], sz[warp][hh] = z[hh]; }
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            if (i + j < p.d) { sacc[warp][hh][i + j] = acc[hh][j]; }
+        }
     }
     __syncthreads();
-    if (warp != 0) { return; }
-    const float sink = __bfloat162float(p.sink[col * p.q_heads + h]);
-    float mt         = sink;
-    for (int w = 0; w < kAttnWarps; ++w) { mt = fmaxf(mt, sm[w]); }
-    float zt = expf(sink - mt);
-    float cw[kAttnWarps];
+    if (warp >= G) { return; }
+    const int hh = warp, h = h0 + hh;
+    float mt = -INFINITY;
+    for (int w = 0; w < kAttnWarps; ++w) { mt = fmaxf(mt, sm[w][hh]); }
+    const std::int64_t qh = static_cast<std::int64_t>(col) * p.q_heads + h;
+    if (p.splits == 1) {
+        const float sink = __bfloat162float(p.sink[qh]);
+        mt               = fmaxf(mt, sink);
+    }
+    float zt = 0.0F, cw[kAttnWarps];
     for (int w = 0; w < kAttnWarps; ++w) {
-        cw[w] = sm[w] == -INFINITY ? 0.0F : expf(sm[w] - mt);
-        zt += sz[w] * cw[w];
+        cw[w] = sm[w][hh] == -INFINITY ? 0.0F : expf(sm[w][hh] - mt);
+        zt += sz[w][hh] * cw[w];
     }
-    __nv_bfloat16* o = p.out + (col * p.q_heads + h) * p.d;
+    if (p.splits == 1) {
+        zt += expf(__bfloat162float(p.sink[qh]) - mt);
+        __nv_bfloat16* o = p.out + qh * p.d;
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            if (i + j >= p.d) { continue; }
+            float sum = 0;
+            for (int w = 0; w < kAttnWarps; ++w) { sum += sacc[w][hh][i + j] * cw[w]; }
+            o[i + j] = __float2bfloat16(sum / zt);
+        }
+        return;
+    }
+    float* part = p.part + (qh * p.splits + split) * kAttnPart;
+    if (lane == 0) { part[0] = mt, part[1] = zt; }
+#pragma unroll
     for (int j = 0; j < 4; ++j) {
-        const int i = lane + 32 * j;
-        if (i >= p.d) { continue; }
+        if (i + j >= p.d) { continue; }
         float sum = 0;
-        for (int w = 0; w < kAttnWarps; ++w) { sum += sacc[w][i] * cw[w]; }
-        o[i] = __float2bfloat16(sum / zt);
+        for (int w = 0; w < kAttnWarps; ++w) { sum += sacc[w][hh][i + j] * cw[w]; }
+        part[2 + i + j] = sum;
     }
+}
+
+// One warp a (head, column): the splits' partials and the sink.
+__global__ void attention_join_kernel(AttnParams p) {
+    const int h = blockIdx.x, col = blockIdx.y, lane = threadIdx.x, i = 4 * lane;
+    const std::int64_t qh = static_cast<std::int64_t>(col) * p.q_heads + h;
+    const float* part     = p.part + qh * p.splits * kAttnPart;
+    const float sink      = __bfloat162float(p.sink[qh]);
+    float mt              = sink;
+    for (int s = 0; s < p.splits; ++s) { mt = fmaxf(mt, part[s * kAttnPart]); }
+    float zt = expf(sink - mt), acc[4] = {0, 0, 0, 0};
+    for (int s = 0; s < p.splits; ++s) {
+        const float ms = part[s * kAttnPart];
+        const float c  = ms == -INFINITY ? 0.0F : expf(ms - mt);
+        zt += part[s * kAttnPart + 1] * c;
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            if (i + j < p.d) { acc[j] += part[s * kAttnPart + 2 + i + j] * c; }
+        }
+    }
+    __nv_bfloat16* o = p.out + qh * p.d;
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+        if (i + j < p.d) { o[i + j] = __float2bfloat16(acc[j] / zt); }
+    }
+}
+
+// The key splits a call takes: enough blocks to cover the SMs twice, at most kAttnMaxSplit.
+int attention_splits(int groups, int columns) {
+    static const int sms = [] {
+        int device = 0, count = 0;
+        if (cudaGetDevice(&device) != cudaSuccess ||
+            cudaDeviceGetAttribute(&count, cudaDevAttrMultiProcessorCount, device) != cudaSuccess) {
+            return 1;
+        }
+        return count;
+    }();
+    const int blocks = groups * columns;
+    return std::clamp((2 * sms + blocks - 1) / blocks, 1, kAttnMaxSplit);
 }
 
 } // namespace
@@ -501,9 +600,17 @@ void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, cons
     CUDA_CHECK(cudaGetLastError());
 }
 
+std::size_t inkling2_attention_scratch_bytes(std::int32_t q_heads, std::int32_t kv_heads,
+                                             std::int32_t columns) {
+    const int splits = attention_splits(kv_heads, columns);
+    return splits == 1 ? 0
+                       : static_cast<std::size_t>(columns) * q_heads * splits * kAttnPart *
+                             sizeof(float);
+}
+
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
                         const Gemma4KvLayer& cache, const Tensor& positions, std::int32_t extent,
-                        Tensor& out, cudaStream_t stream) {
+                        const Tensor& scratch, Tensor& out, cudaStream_t stream) {
     const char* op = "inkling2_attention";
     need_bf16(q, op, "q");
     need_bf16(r, op, "r");
@@ -516,13 +623,14 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
     const int hkv = cache.k.ne[cache.block_tables.data ? 3 : 2];
     need(!kv.fp8, op, "BF16 cache planes");
     need(kv.batch == batch, op, "one binding a batch row");
-    need(d <= 128 && dr <= 32 && hq % hkv == 0 && r.ne[1] == hq && r.ne[2] == tokens &&
+    need(d <= 128 && d % 4 == 0 && dr <= 32 && hq % hkv == 0 && hq / hkv <= kAttnMaxGroup && r.ne[1] == hq && r.ne[2] == tokens &&
              r.ne[3] == batch && sink.ne[0] == hq && sink.ne[1] == tokens && sink.ne[2] == batch &&
              bias.ne[0] == dr && bias.ne[1] == extent && positions.ne[0] == tokens &&
              positions.ne[1] == batch && out.ne[0] == d && out.ne[1] == hq && out.ne[2] == tokens &&
              out.ne[3] == batch,
          op,
-         "D <= 128, Dr <= 32, q/out [D, Hq, T, B], r [Dr, Hq, T, B], sink [Hq, T, B], "
+         "D <= 128 (a multiple of 4), Dr <= 32, Hq / Hkv <= 4, q/out [D, Hq, T, B], "
+         "r [Dr, Hq, T, B], sink [Hq, T, B], "
          "bias [extent, Dr], positions [T, B]");
     AttnParams p{};
     p.q         = static_cast<const __nv_bfloat16*>(q.data),
@@ -536,8 +644,26 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
     p.kv        = kv.address;
     p.q_heads = hq, p.kv_heads = hkv, p.d = d, p.dr = dr, p.tokens = tokens;
     p.extent = extent, p.window = cache.window;
-    attention_kernel<<<dim3(hq, tokens, batch), 32 * kAttnWarps, 0, stream>>>(p);
+    const int columns = tokens * batch;
+    p.splits          = attention_splits(hkv, columns);
+    if (p.splits > 1) {
+        need(scratch.data != nullptr &&
+                 scratch.bytes() >= inkling2_attention_scratch_bytes(hq, hkv, columns),
+             op, "scratch of inkling2_attention_scratch_bytes");
+        p.part = static_cast<float*>(scratch.data);
+    }
+    const dim3 grid(hkv, columns, p.splits);
+    switch (hq / hkv) {
+    case 1: attention_kernel<1><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
+    case 2: attention_kernel<2><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
+    case 3: attention_kernel<3><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
+    default: attention_kernel<4><<<grid, 32 * kAttnWarps, 0, stream>>>(p); break;
+    }
     CUDA_CHECK(cudaGetLastError());
+    if (p.splits > 1) {
+        attention_join_kernel<<<dim3(hq, columns), 32, 0, stream>>>(p);
+        CUDA_CHECK(cudaGetLastError());
+    }
 }
 
 } // namespace ninferno::ops
