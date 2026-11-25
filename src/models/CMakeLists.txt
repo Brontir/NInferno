@@ -96,8 +96,11 @@ target_link_libraries(ninferno_gemma4 PUBLIC ninferno_artifact ninferno::ops nin
 
 # Inkling 2 text: its own family (docs/maintainer/inkling2-model.md).
 add_library(ninferno_inkling2 STATIC
-  inkling2/config.cpp)
+  inkling2/config.cpp
+  inkling2/load.cpp
+  inkling2/target.cu)
 ninferno_internal_includes(ninferno_inkling2)
+ninferno_cuda_lineinfo(ninferno_inkling2)
 target_link_libraries(ninferno_inkling2 PUBLIC ninferno_artifact ninferno::ops ninferno::core
   ninferno_model_common)
 

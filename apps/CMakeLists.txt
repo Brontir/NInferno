@@ -37,6 +37,10 @@ add_executable(ninferno-dense dense/main.cpp)
 ninferno_internal_includes(ninferno-dense)
 target_link_libraries(ninferno-dense PRIVATE ninferno_dense ninferno_convert)
 
+add_executable(ninferno-inkling2 inkling2/main.cpp)
+ninferno_internal_includes(ninferno-inkling2)
+target_link_libraries(ninferno-inkling2 PRIVATE ninferno_inkling2)
+
 add_executable(ninferno-gemma4-inspect gemma4/inspect.cpp)
 ninferno_internal_includes(ninferno-gemma4-inspect)
 target_link_libraries(ninferno-gemma4-inspect PRIVATE ninferno_gemma4)
