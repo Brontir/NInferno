@@ -56,7 +56,7 @@ RANK_LO, RANK_HI = 1, 8
 # (RTX 4090), whose rmma the analyzer prices 12-16 % below its time at T 2-4 (#1211; Qwen3.5-9B Q4_K_M -1.5 / -1.6 /
 # -3.0 % at C 2 / 3 / 4). Its calls keep the authorities after the analyzer until the DRAM side is priced from the
 # die's activation rate.
-HELD_CHIPS = ('ad102',)
+HELD_CHIPS = ()
 LO, HI = 9, 16
 # The narrow band (#785): on these compute capabilities the file also holds T 17..NARROW_HI, which answers the int8
 # calls of those widths outside the prefill profile (speculative verify rounds, decode batches) ahead of the cost
