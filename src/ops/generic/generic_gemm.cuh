@@ -214,6 +214,23 @@ __device__ __forceinline__ void e2m1x2_bf16(unsigned c, unsigned& lo, unsigned& 
     hi               = __byte_perm(l, h, 0x7362U) | ((c & 0x0800U) << 4) | ((c & 0x8000U) << 16);
 }
 
+// An E4M3 byte's binary32 value with selects, no branch: the library's conversion below sm_89
+// branches on subnormals and NaN, which put 16 never-taken arms a K step into the NVFP4 decode
+// (sm_86 w4x1: 1017 instructions in the loop, 624 executed an iteration, #1182) that the warp
+// still issues around (BSSY / BRA / BSYNC) and the kernel facts count. A normal code's exponent
+// is rebiased (7 -> 127), a subnormal is m x 2^-9 (exact), 0x7f / 0xff is NaN: every non-NaN
+// code's value equals the library's, and the two NaN codes give a NaN (other payload bits; the
+// 0.5 x scale and the bf16 rounding make it the canonical NaN either way).
+__device__ __forceinline__ float e4m3_value(unsigned b) {
+    const unsigned sign = (b & 0x80U) << 24;
+    const unsigned e    = (b >> 3) & 0xfU;
+    const unsigned m    = b & 7U;
+    const float normal  = __uint_as_float(sign | ((e + 120U) << 23) | (m << 20));
+    const float sub     = __uint_as_float(sign | __float_as_uint(static_cast<float>(m) * 0x1p-9F));
+    const float v       = e != 0U ? normal : sub;
+    return (b & 0x7fU) == 0x7fU ? __uint_as_float(sign | 0x7fc00000U) : v;
+}
+
 struct Nvfp4Decoder {
     static constexpr int kRun        = 16; // one 16-value scale group: eight code bytes
     static constexpr bool kStepScale = false;
@@ -251,10 +268,16 @@ struct Nvfp4Decoder {
         // doubled codes by byte permutes times half the block scale. Both factors and their
         // product (at most 8 significant bits) are exact in BF16, so these are the converter
         // path's bits.
+#    if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 890
+        // sm_89+ converts E4M3 in one instruction: the library's form (selects would add work:
+        // sm_89 w4x1 413 -> 463 instructions a K trip).
         __nv_fp8_e4m3 block_scale;
         block_scale.__x = static_cast<__nv_fp8_storage_t>(r.scale & 0xffU);
         const __nv_bfloat162 half_scale =
             __float2bfloat162_rn(0.5F * static_cast<float>(block_scale));
+#    else
+        const __nv_bfloat162 half_scale = __float2bfloat162_rn(0.5F * e4m3_value(r.scale & 0xffU));
+#    endif
         unsigned doubled_lo, doubled_hi;
         e2m1x2_bf16(word >> shift, doubled_lo, doubled_hi);
         const __nv_bfloat162 product_lo =
