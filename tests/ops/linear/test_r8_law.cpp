@@ -484,9 +484,8 @@ void check_selector_is_the_prediction() {
         // Where the engine's analyzer answers the board (route_analyzer.h device_routes: any
         // shape, not only the tables'), its answer stands above the law (route_authorities.cpp,
         // the authority "analyzer"); on a held chip or Volta the law answers.
-        const g::Problem off_table{ninferno::QType::GGML_Q6_K,
-                                   ninferno::ops::LinearPolicy::AllowA8, 4608, 3584,
-                                   g::Epilogue::Store};
+        const g::Problem off_table{ninferno::QType::GGML_Q6_K, ninferno::ops::LinearPolicy::AllowA8,
+                                   4608, 3584, g::Epilogue::Store};
         const bool analyzer = !ninferno::ops::route_analyzer::device_routes(off_table, 1).empty();
         expect(one && (analyzer ? one->evidence.source == "analyzer"
                                 : one->evidence.source == "r8-law" &&
