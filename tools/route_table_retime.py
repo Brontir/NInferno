@@ -380,7 +380,9 @@ def main():
                     times = a16_routes(ev_grid.get((key, t), {}), t)
                     return times[route] / min(times.values()) - 1 if route in times else None
 
-                pairs = [(regret2(haves[t], t), regret2(best, t)) for t in moved if t not in dead]
+                # Live by the second grid, not the first (#1206 review): ggml_mmq dead in a first
+                # grid that timed W4A8 is a rival in a second grid that did not.
+                pairs = [(regret2(haves[t], t), regret2(best, t)) for t in moved]
                 pairs = [(o, n) for o, n in pairs if o is not None and n is not None]
                 if pairs:
                     old2 = max(o for o, _ in pairs)

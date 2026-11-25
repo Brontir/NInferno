@@ -204,6 +204,20 @@ def test_repeat_keeps_an_entry_the_second_grid_shows_as_a_tie(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
+def test_repeat_reads_liveness_off_the_second_grid(tmp_path):
+    # #1206 review: ggml_mmq is dead at T 17-19 in the first grid (it timed W4A8), but the second
+    # grid timed no W4A8, so there ggml_mmq is an A16 rival and n2 ties it (100.0 against 100.3):
+    # the whole-move test sees the tie and keeps the entry.
+    rows = [(t, r, us) for t in (17, 18, 19)
+            for r, us in (("n1", 200), ("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))]
+    second = ([(t, r, us) for t in (17, 18, 19) for r, us in (("n2", 100.0), ("ggml_mmq", 100.3))],
+              [(t, "ggml_mmq") for t in (17, 18, 19)])
+    table = [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]]
+    bands, _ = run(tmp_path, table, rows, margin="0.01", evidence=[], second=second, repeat=True,
+                   tokens="17-19")
+    assert bands == table
+
+
 def test_a_borrowed_entry_moves_but_keeps_its_borrowed_rows(tmp_path):
     # tuned_on another board's class: the move is written, this board's rows are not.
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
