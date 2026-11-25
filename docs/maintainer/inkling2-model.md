@@ -106,6 +106,29 @@ for the 40 sliding visits, a full plane for the 8 full visits: layers 5, 23 once
 times) and its convolution state. KV per token: 8 full visits x 8 x 128 x 2 x 2 B = 32 KiB, so
 128 K tokens of context hold 4 GiB of full-layer KV in BF16 (half in the one-byte row codec).
 
+## Program integration (serve)
+
+The standalone `Target` (one sequence, plain launches) qualifies the mathematics. The serving
+family runs the same visits over the Program's state, which already holds every kind Inkling 2
+needs:
+
+- the 8 full-attention visit slots' keys and values in the paged pool (`full_layers`), the 40
+  sliding slots' in rings of each sequence's state image (`sliding_layers`, as the dense decoder);
+- the 48 convolution states in the state image's convolution part (the GatedDeltaNet layout:
+  `conv_width` 3 rows of `conv_channels` 6656 = K + V + attention output + expert output, no
+  recurrent part). A state row holds past inputs, which are BF16 already, so BF16 state is exact.
+
+A `StateFamily::Inkling2` names that layout; prefill, ordinary decode and the decode graph follow
+`models/dense/program_family.cpp`.
+
+## Decode cost (first form)
+
+The analyzer's sealed prices for the decode projections (analyzer_r20/sealed_inkling2.json,
+written before any measurement) put a visit's seven attention projections at ~44 us on the RTX
+4090, i.e. ~2.1 ms a token over 48 visits before the experts and the head: the calls are
+latency-bound (3-10 us each). q, gate, relative and sink read the same input, so one packed
+projection (and k / v / taps another) is the first speed step after qualification.
+
 ## Ops: reuse, extend, new
 
 | Step | Op | Status |
