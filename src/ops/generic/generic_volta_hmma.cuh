@@ -431,6 +431,57 @@ struct HX4 {
     __device__ static constexpr int dest_run(int src) { return src; }
 };
 
+// NVFP4: 16-value blocks of eight code bytes in row order (codes, k / 2 bytes a row), an E4M3
+// scale byte each in the tiled layout (nvfp4_scale_offset), and a per-tensor divisor (row_scale,
+// applied to the output). Quad-pair q: blocks 16 sb + 4q .. 16 sb + 4q + 3, 32 contiguous code
+// bytes; their four scales are one aligned word (group & 3 = 0..3 sit side by side). The operand
+// is HX4's (twice the E2M1 value, an exact f16 integer); the group's scale is half its E4M3
+// value, so a weight is never rounded to f16 (#1165: NVFP4 on sm_70 otherwise runs the register
+// MMA's emulated BF16 call, 6-15x its bus time on the GV100).
+struct HNV4 {
+    static constexpr int kGroups = 4;
+    static constexpr bool kMin   = false;
+    uint4 c[2];
+    unsigned e;
+
+    __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
+        // K a multiple of 64: a quad-pair's four blocks are all in the row or all past it.
+        if (8 * sb + 2 * q >= a.k / 32) {
+            clear();
+            return;
+        }
+        const int k0  = 256 * sb + 64 * q;
+        const auto* p = reinterpret_cast<const uint4*>(a.codes + static_cast<std::int64_t>(row) * (a.k / 2) + k0 / 2);
+        c[0]          = p[0];
+        c[1]          = p[1];
+        e             = *reinterpret_cast<const unsigned*>(a.scales + nvfp4_scale_offset(a, row, k0 / 16));
+    }
+
+    __device__ __forceinline__ void clear() {
+        c[0] = c[1] = make_uint4(0, 0, 0, 0);
+        e           = 0;
+    }
+
+    __device__ __forceinline__ void scale(int, int g, float& ds, float& dm) const {
+        ds = 0.5F * e4m3_value((e >> (8 * g)) & 0xffU);
+        dm = 0.0F;
+    }
+
+    // MMA m: block m / 4, code word m / 2, its half m % 2: the same pairs as HX4.
+    __device__ __forceinline__ void fragment(int m, int q, unsigned& a0, unsigned& a1) const {
+        HX4 x;
+        x.c[0] = c[0];
+        x.c[1] = c[1];
+        x.fragment(m, q, a0, a1);
+    }
+
+    __device__ static __forceinline__ float row_scale(const GemmArgs& a, int row) {
+        return Nvfp4Decoder::row_scale(a, row);
+    }
+
+    __device__ static constexpr int dest_run(int src) { return src; }
+};
+
 // Pre: v holds the staged f16 halves (lo, hi) already, no conversion.
 template <class F, int NTok, bool Pre = false>
 __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint2 (&v)[NTok / 2]) {

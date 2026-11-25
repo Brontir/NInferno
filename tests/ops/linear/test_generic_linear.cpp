@@ -2716,7 +2716,8 @@ int main() {
     if (!device_class().features.mma_tensor) {
         for (const Format& f : kFormats) {
             if (!on_build(f) || (f.qtype != QType::GGML_Q4_K && f.qtype != QType::GGML_Q5_K &&
-                                 f.qtype != QType::GGML_Q6_K && f.qtype != QType::Q8_G32_FP16)) {
+                                 f.qtype != QType::GGML_Q6_K && f.qtype != QType::Q8_G32_FP16 &&
+                                 f.qtype != QType::NVFP4)) {
                 continue;
             }
             for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
@@ -2731,8 +2732,9 @@ int main() {
                 failures += check_volta_hmma_accuracy(f, k, 1.0F, 87U);
                 failures += check_volta_hmma_accuracy(f, k, 0.0F, 89U);
             }
-            // Q8 rows of K % 256 != 0 (gpt-oss's 2880): the last superblock's quad-pairs past K.
-            if (f.qtype == QType::Q8_G32_FP16) {
+            // Q8 / NVFP4 rows of K % 256 != 0 (gpt-oss's 2880): the last superblock's quad-pairs
+            // past K.
+            if (f.qtype == QType::Q8_G32_FP16 || f.qtype == QType::NVFP4) {
                 failures += check_volta_hmma_invariance(f, Op::Linear, 72, 2880,
                                                         ops::LinearPolicy::A16Only, 91U);
                 failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 2880,

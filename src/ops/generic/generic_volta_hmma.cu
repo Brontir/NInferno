@@ -220,8 +220,14 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
             const int token = 8 * g + (i & 4) + (lane & 2) + (i & 1);
             if (token >= a.tokens) continue;
             float value = acc[0][g][i];
-            if constexpr (E == Epilogue::SwiGlu)
-                value = generic_gate(a, value) * acc[kSets - 1][g][i];
+            float up    = acc[kSets - 1][g][i];
+            // A format with a per-tensor scale (NVFP4's divisor): on each set's own row, as the
+            // register MMA applies it (Decoder::row_scale).
+            if constexpr (requires { F::row_scale(a, 0); }) {
+                value *= F::row_scale(a, a.row_begin + row);
+                if constexpr (kSets == 2) up *= F::row_scale(a, a.row_begin + row + a.up_offset);
+            }
+            if constexpr (E == Epilogue::SwiGlu) value = generic_gate(a, value) * up;
             store_output<E>(a, row, token, value);
         }
     }

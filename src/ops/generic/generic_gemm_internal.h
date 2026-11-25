@@ -195,7 +195,7 @@ void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& arg
                        cudaStream_t stream);
 
 // Volta's tensor-core route of the speculative-verify widths (generic_volta_hmma.cu): Q4_K / Q5_K
-// / Q6_K and Q8 G32 at kVoltaHmmaMinTokens..16 tokens, in place of a lane-local register-MMA call
+// / Q6_K, Q8 G32 and NVFP4 at kVoltaHmmaMinTokens..16 tokens, in place of a lane-local register-MMA call
 // (and of ggml's vector kernel, volta_hmma_route). From one token: a lane-local call of one token
 // ran Volta's FP32 decode GEMV (generic_volta_gemv.cu) and the same token in a wider call the HMMA
 // kernel, so an A16 projection's bytes depended on its call's width (an MoE's A16 shared expert at
@@ -204,7 +204,7 @@ void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& arg
 inline constexpr std::int32_t kVoltaHmmaMinTokens = 1;
 inline constexpr std::int32_t kVoltaHmmaMaxTokens = 16;
 bool volta_hmma_codec(WeightCodec codec);
-// The K multiple a row needs: whole superblocks, or for Q8 G32 whole pairs of groups.
+// The K multiple a row needs: whole superblocks, or for Q8 G32 and NVFP4 whole 64-value runs.
 int volta_hmma_k_multiple(WeightCodec codec);
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args);
 void launch_volta_hmma(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,

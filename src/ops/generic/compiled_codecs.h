@@ -186,7 +186,8 @@
     X(GgmlQ4K, HK45<4>)                                                                            \
     X(GgmlQ5K, HK45<5>)                                                                            \
     X(GgmlQ6K, HK6)                                                                                \
-    X(Q8, HQ8)
+    X(Q8, HQ8)                                                                                     \
+    X(Nvfp4, HNV4)
 
 // generic_volta_gemv.cu: Volta's warp-per-row GEMV (volta_gemv_takes).
 #define NINFERNO_VOLTA_GEMV_CODECS(X)                                                              \
