@@ -40,7 +40,7 @@ never demoted and never claims a shape-owned problem. An explicit `--route-table
 and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
 
 ## T 1-8: the analyzer's ranked lists (the switch to one decision source)
-Every class of sm_75, sm_86, sm_89 and sm_120a with tensor cores gets a file, the tabled boards and the boards within
+Every class of sm_86, sm_89 and sm_120a with tensor cores gets a file (sm_75's chips are held, below), the tabled boards and the boards within
 `kCarryDistance` of a table included (56 files today; schema `ninferno-route-pick/2`). Each entry holds `ranked`, the
 widths T 1-8 as runs `[t_min, t_max, [route, ...]]` of `analyzer.rank()` over the repo's facts: every route the analyzer
 prices for the call, cheapest first, cut after the first register-MMA schedule (an A16 route every policy admits). The

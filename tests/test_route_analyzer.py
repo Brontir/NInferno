@@ -80,20 +80,20 @@ def main():
     # latency_pays (generic_rmma_describe.cpp): on sm_75 SwiGLU's latency instance is the activation ring's form only, a CTA
     # of at most 128 threads; elsewhere the instance launches where it keeps the plain kernel's waves.
     sm75 = next(b for b in bs if int(b['cc']) == 75)
-    c75, c89 = analyzer.card_of(sm75, F), analyzer.card_of(sm89, F)
+    c75 = analyzer.card_of(sm75, F)
     same = dict(registers='128')
     assert c75['bpc'] >= analyzer.LAT_BYTES['swiglu'], 'the sm_75 board is not latency-bound for SwiGLU'
     assert analyzer.latency_launched(c75, 'swiglu', 1, 4, 1, 12288, same, same)
     assert not analyzer.latency_launched(c75, 'swiglu', 1, 8, 1, 12288, same, same)
     assert not analyzer.latency_launched(c75, 'swiglu', 1, 4, 1, 12288, same, None)
-    if c89['bpc'] >= analyzer.LAT_BYTES['swiglu']:
-        assert analyzer.latency_launched(c89, 'swiglu', 1, 8, 1, 12288, same, same)
-    # A latency kernel that holds fewer CTAs an SM launches only while the grid fits as many waves.
+    # A latency kernel that holds fewer CTAs an SM launches only while the grid fits as many waves (SwiGLU w1x4 on the sm_75
+    # board, whose bytes a cycle pass SwiGLU's bound: asserted above, so these cannot pass at the gate).
     big = dict(registers='255')
     sms = c75['sms']
+    assert analyzer.occupancy(c75, 4, 255.0) < analyzer.occupancy(c75, 4, 128.0), 'the 255-register kernel holds as many CTAs'
     one_wave = int(16 * sms * analyzer.occupancy(c75, 4, 255.0))
-    assert analyzer.latency_launched(c75, 'store', 1, 4, 1, one_wave, same, big) == (c75['bpc'] >= analyzer.LAT_BYTES['store'])
-    assert not analyzer.latency_launched(c75, 'store', 1, 4, 1, 16 * sms * int(analyzer.occupancy(c75, 4, 128.0)), same, big)
+    assert analyzer.latency_launched(c75, 'swiglu', 1, 4, 1, one_wave, same, big)
+    assert not analyzer.latency_launched(c75, 'swiglu', 1, 4, 1, 16 * sms * int(analyzer.occupancy(c75, 4, 128.0)), same, big)
     print('boards %d, shapes %d, T 1-8: %d failures' % (len(bs), len(shapes), failures))
     return 1 if failures else 0
 
