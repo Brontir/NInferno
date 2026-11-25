@@ -280,6 +280,27 @@ def mmq_key(demangled):
 VEC_NAMESPACE = "ninferno::ops::ggml_mmq::detail::(anonymousnamespace)::"
 
 
+def volta_key(demangled, name, n):
+    """The key of a Volta substitute kernel (generic_volta_hmma.cu / generic_volta_gemv.cu, in their
+    files' anonymous namespace): the format struct (HK45<4>, Q8G32, ...) and the integer template
+    arguments (epilogue, column groups or tokens, loads ahead or rows). None for other symbols."""
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"),
+                         "void " + NAMESPACE + "(anonymousnamespace)::" + name)
+    if args is None:
+        return None
+    if len(args) != n:
+        fail(f"unexpected {name} arguments in {demangled}")
+    fmt = args[0].split("::")[-1].replace(" ", "")
+    ints = []
+    for a in args[1:]:
+        m = re.search(r"(\d+)$", a)
+        if not m:
+            fail(f"unexpected {name} arguments in {demangled}")
+        ints.append(int(m.group(1)))
+    return (fmt, *ints)
+
+
 def vec_key(demangled):
     """The key of a vector kernel instance (src/ops/generic/ggml_mmq/ggml_vec.cu, #763):
     vec_kernel<type, T, KS, Gated, Bounded> in the file's anonymous namespace, keyed as the
@@ -493,11 +514,14 @@ class Family:
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
                  marker=None, prologue=None, waits=False, producer=None, emulated=False,
-                 inflight=False):
+                 inflight=False, archs=None):
         # The C++ reader takes the loads in flight ahead of the producer loop, the columns line
         # lists them after it: a family carries one or the other (kernel_facts.cpp asserts it).
         assert not (inflight and producer), name
         self.name = name
+        # The archs whose snapshot holds the family (None: every arch): Volta's substitutes of
+        # the register MMA run on sm_70 alone (their bodies trap elsewhere, NINFERNO_HMMA884).
+        self.archs = archs
         # Whether its rows carry the K loop's global loads in flight a lane
         # (sass_counts.INFLIGHT_FIELDS) after the wait classes: the vec section (#1185), whose
         # instances ptxas compiles to registers that set how many of a row's loads stay in flight.
@@ -583,6 +607,19 @@ FAMILIES = {
                   inflight=True),
     "vecmma": Family("vecmma", ("type", "gated"), lambda d: vec_mma_key(d), "vec_mma_kernel",
                      lambda key: 1, True, False),
+    # Volta's substitutes of the register MMA (generic_volta_hmma.cu, generic_volta_gemv.cu,
+    # #1165): sm_70 alone. k_iter 1: an iteration is one 256-value superblock of the lane's rows.
+    "vhmma": Family("vhmma", ("fmt", "E", "NG", "ahead"),
+                    lambda d: volta_key(d, "volta_hmma_kernel<", 4), "volta_hmma_kernel",
+                    lambda key: 1, True, True, waits=True, archs=("70",)),
+    "vgemv": Family("vgemv", ("fmt", "E", "NT"),
+                    lambda d: volta_key(d, "volta_kquant_gemv_kernel<", 3),
+                    "volta_kquant_gemv_kernel", lambda key: 1, True, True, waits=True,
+                    archs=("70",)),
+    "vgemvr": Family("vgemvr", ("fmt", "E", "NT", "R"),
+                     lambda d: volta_key(d, "volta_kquant_gemv_rows_kernel<", 4),
+                     "volta_kquant_gemv_rows_kernel", lambda key: 1, True, True, waits=True,
+                     archs=("70",)),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -1285,7 +1322,9 @@ RESOURCES_ONLY = {("70", "mmq")}
 
 
 def cmd_extract(args):
-    families = family_list(args.families)
+    # A family of other archs only (Family.archs) is not part of this arch's snapshot.
+    families = tuple(f for f in family_list(args.families)
+                     if FAMILIES[f].archs is None or str(args.arch) in FAMILIES[f].archs)
     sass = () if args.no_sass else tuple(
         f for f in families if FAMILIES[f].loop and (args.arch, f) not in RESOURCES_ONLY)
     extracted = extract_families(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,

@@ -216,8 +216,16 @@ struct SnapshotHeader {
 //   "vecmma"  the vector family's few-row MMA tiles vec_mma_kernel<type, Gated> (ggml_vec.cu,
 //             #1162; route ggml_vec.mma): key "type gated" ("12 0"); below sm_80 no MMA in the
 //             loop (a trap stand-in, never launched).
-inline constexpr std::string_view kSectionFamilies[] = {"mmq",   "w4a8",    "gemma4", "r8",    "i8",
-                                                        "moer8", "moegemm", "vec",    "vecmma"};
+//   "vhmma" / "vgemv" / "vgemvr"  Volta's substitutes of the register MMA (#1165), in the sm_70
+//             snapshot alone (their bodies trap elsewhere): volta_hmma_kernel<format, epilogue, NG,
+//             ahead> (generic_volta_hmma.cu; key "fmt E NG ahead", "HK45<4> 0 1 2"),
+//             volta_kquant_gemv_kernel<format, epilogue, NT> and its rows twin <..., NT, R>
+//             (generic_volta_gemv.cu; "Q8G32 0 1", "K6 0 4 4"). One iteration is one 256-value
+//             superblock of the lane's rows (k_iter 1). The analyzer (tools/route_pick) prices
+//             sm_70's rmma.* routes as the kernel the launch substitutes.
+inline constexpr std::string_view kSectionFamilies[] = {"mmq",    "w4a8",  "gemma4",  "r8",
+                                                        "i8",     "moer8", "moegemm", "vec",
+                                                        "vecmma", "vhmma", "vgemv",   "vgemvr"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
