@@ -12,6 +12,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -102,6 +103,7 @@ int main(int argc, char** argv) {
         top(logits, 10);
         target.observe = nullptr;
         std::printf("generated:");
+        const auto start = std::chrono::steady_clock::now();
         for (int g = 0; g < generate; ++g) {
             const auto next = static_cast<std::int32_t>(
                 std::max_element(logits.begin(), logits.end()) - logits.begin());
@@ -110,7 +112,14 @@ int main(int argc, char** argv) {
             const std::int32_t one[1] = {next};
             logits                    = target.forward(one, s);
         }
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                .count();
         std::printf("\n");
+        if (generate > 0) {
+            std::printf("decode: %d tokens, %.3f ms a token (%.1f tok/s), one sequence, no graph\n",
+                        generate, ms / generate, 1000.0 * generate / ms);
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ninferno-inkling2: %s\n", e.what());
         return 1;
