@@ -218,7 +218,7 @@ int prepare_case(bool full, std::uint32_t seed) {
         const auto rows = [&](const std::vector<float>& x, std::vector<double>& e, int heads, int n,
                               const std::vector<float>* scale, double c, double post, bool rms) {
             for (int h = 0; h < heads; ++h) {
-                std::vector<double> row(std::size_t(n));
+                std::vector<double> row(static_cast<std::size_t>(n));
                 const std::size_t base = (std::size_t(t) * heads + h) * n;
                 for (int i = 0; i < n; ++i) {
                     row[std::size_t(i)] =
@@ -263,7 +263,7 @@ int attention_case(int window, int extent, std::uint32_t seed) {
                               k.begin() + std::ptrdiff_t(first + n) * d * hkv);
         std::vector<float> vs(v.begin() + std::ptrdiff_t(first) * d * hkv,
                               v.begin() + std::ptrdiff_t(first + n) * d * hkv);
-        std::vector<int> pos(std::size_t(n));
+        std::vector<int> pos(static_cast<std::size_t>(n));
         for (int i = 0; i < n; ++i) { pos[std::size_t(i)] = first + i; }
         auto dks = to_device_bf16(ks), dvs = to_device_bf16(vs), dpos = to_device_i32(pos);
         Tensor tk(dks.p, DType::BF16, {d, hkv, n}), tv(dvs.p, DType::BF16, {d, hkv, n}),
