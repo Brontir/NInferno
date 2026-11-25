@@ -99,7 +99,11 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
         ops::Inkling2MixOutputs out;
         for (auto& o : outs) { out.data[static_cast<std::size_t>(out.count++)] = o.data; }
         const Tensor q(query.data, DType::FP32, {H, static_cast<std::int32_t>(outs.size())});
-        ops::inkling2_depth_mix(in, q, H, n, out, s);
+        auto scope           = work.scope();
+        const Tensor scratch = work.alloc(
+            DType::FP32,
+            {static_cast<std::int32_t>(ops::inkling2_depth_mix_scratch_bytes(H, n) / 4)});
+        ops::inkling2_depth_mix(in, q, H, n, out, scratch, s);
     };
     const auto control = [&](const Tensor& cur, const Tensor& msg, const Controller& ctrl) {
         Tensor pair = tmp(2 * H);

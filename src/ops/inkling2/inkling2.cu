@@ -70,22 +70,24 @@ struct MixParams {
 };
 
 constexpr int kMixThreads = 256;
+constexpr int kMixSums    = kInkling2MaxMixStates * (kInkling2MaxMixQueries + 1);
 
-// One block a token. One pass over the states gathers every sum the weights need (each state's
-// sum of squares and its dot with every query) in registers; one block reduction of them all, the
-// softmax, then the weighted sum. (A reduction a sum, 1 + queries of them a state, took 13.9 us a
-// call at T 1 on the RTX 4090: 16 % of the decode's kernel time.)
-__global__ void depth_mix_kernel(MixParams p) {
-    constexpr int S = kInkling2MaxMixStates, Q = kInkling2MaxMixQueries, kSums = S * (Q + 1);
+// Two kernels, a block a chunk of kMixThreads channels a token (9 blocks a token at H 2304, where
+// one block a token took 9.8 us a call on the RTX 4090: its loop over H waited on the loads one
+// after another). The first gathers every sum the weights need over its chunk (each state's sum of
+// squares, its dot with every query) into `part`; the second adds the chunks' sums, takes the
+// softmax, and writes its chunk of every output.
+__global__ void depth_mix_sums_kernel(MixParams p, float* part) {
+    constexpr int S = kInkling2MaxMixStates, Q = kInkling2MaxMixQueries;
     constexpr int kWarps = kMixThreads / 32;
-    __shared__ float part[kWarps][kSums];
-    __shared__ float total[kSums];
-    __shared__ float weight[Q][S];
-    const std::int64_t base = static_cast<std::int64_t>(blockIdx.x) * p.hidden;
-    float acc[kSums];
+    __shared__ float warp_part[kWarps][kMixSums];
+    const int chunk = blockIdx.x, chunks = gridDim.x, t = blockIdx.y;
+    const int h = chunk * kMixThreads + threadIdx.x;
+    const std::int64_t base = static_cast<std::int64_t>(t) * p.hidden;
+    float acc[kMixSums];
 #pragma unroll
-    for (int i = 0; i < kSums; ++i) { acc[i] = 0.0F; }
-    for (int h = threadIdx.x; h < p.hidden; h += kMixThreads) {
+    for (int i = 0; i < kMixSums; ++i) { acc[i] = 0.0F; }
+    if (h < p.hidden) {
         float qv[Q];
 #pragma unroll
         for (int r = 0; r < Q; ++r) {
@@ -95,24 +97,38 @@ __global__ void depth_mix_kernel(MixParams p) {
         for (int st = 0; st < S; ++st) {
             if (st < p.count) {
                 const float x = bf(p.states[st], base + h);
-                acc[st] += x * x;
+                acc[st]       = x * x;
 #pragma unroll
-                for (int r = 0; r < Q; ++r) { acc[S + r * S + st] += x * qv[r]; }
+                for (int r = 0; r < Q; ++r) { acc[S + r * S + st] = x * qv[r]; }
             }
         }
     }
     const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
 #pragma unroll
-    for (int i = 0; i < kSums; ++i) {
+    for (int i = 0; i < kMixSums; ++i) {
         const float v = warp_sum(acc[i]);
-        if (lane == 0) { part[warp][i] = v; }
+        if (lane == 0) { warp_part[warp][i] = v; }
     }
     __syncthreads();
-    if (threadIdx.x < kSums) {
-        float t = 0.0F;
+    if (threadIdx.x < kMixSums) {
+        float sum = 0.0F;
 #pragma unroll
-        for (int w = 0; w < kWarps; ++w) { t += part[w][threadIdx.x]; }
-        total[threadIdx.x] = t;
+        for (int w = 0; w < kWarps; ++w) { sum += warp_part[w][threadIdx.x]; }
+        part[(static_cast<std::int64_t>(t) * chunks + chunk) * kMixSums + threadIdx.x] = sum;
+    }
+}
+
+__global__ void depth_mix_out_kernel(MixParams p, const float* part) {
+    constexpr int S = kInkling2MaxMixStates, Q = kInkling2MaxMixQueries;
+    __shared__ float total[kMixSums];
+    __shared__ float weight[Q][S];
+    const int chunk = blockIdx.x, chunks = gridDim.x, t = blockIdx.y;
+    if (threadIdx.x < kMixSums) {
+        float sum = 0.0F;
+        for (int c = 0; c < chunks; ++c) {
+            sum += part[(static_cast<std::int64_t>(t) * chunks + c) * kMixSums + threadIdx.x];
+        }
+        total[threadIdx.x] = sum;
     }
     __syncthreads();
     if (threadIdx.x < p.queries) {
@@ -135,16 +151,17 @@ __global__ void depth_mix_kernel(MixParams p) {
         }
     }
     __syncthreads();
-    for (int h = threadIdx.x; h < p.hidden; h += kMixThreads) {
-        float x[S];
+    const int h = chunk * kMixThreads + threadIdx.x;
+    if (h >= p.hidden) { return; }
+    const std::int64_t base = static_cast<std::int64_t>(t) * p.hidden;
+    float x[S];
 #pragma unroll
-        for (int st = 0; st < S; ++st) { x[st] = st < p.count ? bf(p.states[st], base + h) : 0.0F; }
-        for (int r = 0; r < p.queries; ++r) {
-            float a = 0.0F;
+    for (int st = 0; st < S; ++st) { x[st] = st < p.count ? bf(p.states[st], base + h) : 0.0F; }
+    for (int r = 0; r < p.queries; ++r) {
+        float a = 0.0F;
 #pragma unroll
-            for (int st = 0; st < S; ++st) { a += weight[r][st] * x[st]; }
-            p.out[r][base + h] = __float2bfloat16(a);
-        }
+        for (int st = 0; st < S; ++st) { a += weight[r][st] * x[st]; }
+        p.out[r][base + h] = __float2bfloat16(a);
     }
 }
 
@@ -359,8 +376,14 @@ __global__ void attention_kernel(AttnParams p) {
 
 } // namespace
 
+std::size_t inkling2_depth_mix_scratch_bytes(std::int32_t hidden, std::int32_t tokens) {
+    const std::size_t chunks = (static_cast<std::size_t>(hidden) + kMixThreads - 1) / kMixThreads;
+    return chunks * static_cast<std::size_t>(tokens) * kMixSums * sizeof(float);
+}
+
 void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, std::int32_t hidden,
-                        std::int32_t tokens, const Inkling2MixOutputs& out, cudaStream_t stream) {
+                        std::int32_t tokens, const Inkling2MixOutputs& out, const Tensor& scratch,
+                        cudaStream_t stream) {
     const char* op = "inkling2_depth_mix";
     need(states.count >= 1 && states.count <= kInkling2MaxMixStates, op, "1..12 states");
     need(out.count >= 1 && out.count <= kInkling2MaxMixQueries, op, "1..4 outputs");
@@ -380,7 +403,14 @@ void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, st
     p.count   = states.count;
     p.queries = out.count;
     p.hidden  = hidden;
-    depth_mix_kernel<<<tokens, kMixThreads, 0, stream>>>(p);
+    need(scratch.data != nullptr &&
+             scratch.bytes() >= inkling2_depth_mix_scratch_bytes(hidden, tokens),
+         op, "scratch of inkling2_depth_mix_scratch_bytes");
+    const dim3 grid((hidden + kMixThreads - 1) / kMixThreads, tokens);
+    float* part = static_cast<float*>(scratch.data);
+    depth_mix_sums_kernel<<<grid, kMixThreads, 0, stream>>>(p, part);
+    CUDA_CHECK(cudaGetLastError());
+    depth_mix_out_kernel<<<grid, kMixThreads, 0, stream>>>(p, part);
     CUDA_CHECK(cudaGetLastError());
 }
 

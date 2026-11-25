@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace ninferno::ops {
@@ -43,8 +44,12 @@ struct Inkling2MixOutputs {
     std::int32_t count = 0;
 };
 
+/// The scratch one depth mix of `tokens` tokens takes (its per-chunk sums, FP32).
+[[nodiscard]] std::size_t inkling2_depth_mix_scratch_bytes(std::int32_t hidden, std::int32_t tokens);
+
 void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, std::int32_t hidden,
-                        std::int32_t tokens, const Inkling2MixOutputs& out, cudaStream_t stream);
+                        std::int32_t tokens, const Inkling2MixOutputs& out, const Tensor& scratch,
+                        cudaStream_t stream);
 
 /**
  * Op: short causal convolution with its state and a residual (graph::convolve).

@@ -55,7 +55,11 @@ int depth_mix_case(int hidden, int tokens, int count, int queries, std::uint32_t
     }
     out.count = queries;
     Tensor q(device_query.p, DType::FP32, {hidden, queries});
-    ops::inkling2_depth_mix(in, q, hidden, tokens, out, nullptr);
+    const std::size_t scratch_bytes = ops::inkling2_depth_mix_scratch_bytes(hidden, tokens);
+    DeviceBuffer scratch(scratch_bytes);
+    const Tensor scratch_t(scratch.p, DType::FP32,
+                           {static_cast<std::int32_t>(scratch_bytes / 4)});
+    ops::inkling2_depth_mix(in, q, hidden, tokens, out, scratch_t, nullptr);
     cuda_synchronize();
     int failures = 0;
     for (int r = 0; r < queries; ++r) {
