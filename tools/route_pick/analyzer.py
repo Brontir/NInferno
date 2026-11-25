@@ -285,6 +285,8 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
     pre = launch_ns(c, P, 1) + l0 + second_kernel(c, P)    # the activation pre-pass: a launch and a DRAM latency
     out = c['lat'] * _num(r['outside_stall']) / clk if r else 0.0
     if fam == 'ggml_mmq':                                  # 128-row tiles; one CTA an SM, or a tile a CTA (the fill rule)
+        # ggml_mmq.cu quantize_activation: a CTA quantizes 512 values of a column, columns x ceil(K / 512) CTAs.
+        pre = launch_ns(c, P, T * math.ceil(k / 512.0)) + l0 + second_kernel(c, P)
         nt = math.ceil(n / 128.0)
         launch = mmq_launch(n, k, int(sms), mmq_j(T), T)
         ctas = launch['blocks']
@@ -292,13 +294,19 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
         # blocks)), each set's: a launch takes as long as its longest CTA (mmq_unit.cpp launch_seconds).
         per = launch['units'] * sets / math.ceil(ctas / sms)
         cyc = c['imma_w'] if '16832' in r.get('mma_shape', '') else c['imma_n']
-        issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, _num(r['stall_sum']) / clk)
+        # The unit as mmq_unit.cpp unit_seconds: its loads (the weight tiles at the bus, or every resident CTA's tile and
+        # its j activation columns, two block_q8_1_mmq of 144 B a column, at the L2 rate) and one DRAM latency, then its
+        # chain (the loop's stall clocks and its waits on shared loads, a shared latency each); the MMA issue bounds it.
+        chain = (_num(r['stall_sum']) + _num(r.get('sb_waits_shared')) * c['smem_lat']) / clk
+        issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, chain)
         # The weights come from DRAM once over the launch (mmq_unit.cpp unit_facts_of): the row tiles' K steps spread over
         # the launch's units, at most one weight tile a resident CTA an iteration (a tile each up to the SMs, or the
         # stream-k CTAs); a tile is 128 rows x 256 values.
         resident = ctas if launch['split'] else min(launch['tiles'], int(sms))
         weight_tiles = min(resident, math.ceil(nt * max(1, math.ceil(k / 256.0)) / float(launch['units'])))
-        unit = per * (issue + 4096.0 * bits * weight_tiles / bus)
+        l2_ns = resident * (4096.0 * bits + mmq_j(T) * 288.0) / (c['l2bpc'] * resident * clk)
+        load = max(4096.0 * bits * weight_tiles / bus, l2_ns) + c['dramlat'] / clk
+        unit = per * (issue + load)
         # generic_gemm.cpp GgmlMmq: the quantizer (pre), one product launch a weight set (a gated call runs the gate's and
         # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
         # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch, and its bytes: each output reads
