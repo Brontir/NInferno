@@ -60,6 +60,7 @@ public:
     ~Model();
 
     [[nodiscard]] const Config& config() const noexcept { return config_; }
+
     [[nodiscard]] const Weights& weights() const noexcept { return weights_; }
 
 private:

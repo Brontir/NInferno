@@ -38,7 +38,8 @@ std::vector<std::int32_t> parse_ids(const std::string& text) {
 void top(const std::vector<float>& logits, int k) {
     std::vector<int> index(logits.size());
     std::iota(index.begin(), index.end(), 0);
-    std::partial_sort(index.begin(), index.begin() + k, index.end(), [&](int a, int b) { return logits[a] > logits[b]; });
+    std::partial_sort(index.begin(), index.begin() + k, index.end(),
+                      [&](int a, int b) { return logits[a] > logits[b]; });
     std::printf("top:");
     for (int i = 0; i < k; ++i) { std::printf(" %d:%.4f", index[i], logits[index[i]]); }
     std::printf("\n");
@@ -48,7 +49,8 @@ void top(const std::vector<float>& logits, int k) {
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: ninferno-inkling2 <artifact> --ids 1,2,3 [--generate N] [--dump]\n");
+        std::fprintf(stderr,
+                     "usage: ninferno-inkling2 <artifact> --ids 1,2,3 [--generate N] [--dump]\n");
         return 2;
     }
     std::vector<std::int32_t> ids;
@@ -56,20 +58,26 @@ int main(int argc, char** argv) {
     bool dump    = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
-        if (a == "--ids" && i + 1 < argc) { ids = parse_ids(argv[++i]); }
-        else if (a == "--generate" && i + 1 < argc) { generate = std::stoi(argv[++i]); }
-        else if (a == "--dump") { dump = true; }
+        if (a == "--ids" && i + 1 < argc) {
+            ids = parse_ids(argv[++i]);
+        } else if (a == "--generate" && i + 1 < argc) {
+            generate = std::stoi(argv[++i]);
+        } else if (a == "--dump") {
+            dump = true;
+        }
     }
     try {
         DeviceContext device(0);
-        auto model = Model::load(argv[1], device);
+        auto model    = Model::load(argv[1], device);
         const auto& c = model->config();
-        std::printf("loaded: H %d layers %d visits %d vocab %d/%d experts %d top %d\n", c.hidden_size, c.layers,
-                    c.visits(), c.vocab_size, c.vocab_rows, c.experts, c.experts_per_tok);
-        Target target(*model, 4096, std::max<std::int32_t>(64, static_cast<std::int32_t>(ids.size())));
+        std::printf("loaded: H %d layers %d visits %d vocab %d/%d experts %d top %d\n",
+                    c.hidden_size, c.layers, c.visits(), c.vocab_size, c.vocab_rows, c.experts,
+                    c.experts_per_tok);
+        Target target(*model, 4096,
+                      std::max<std::int32_t>(64, static_cast<std::int32_t>(ids.size())));
         if (dump) {
             const auto& visits = target.visits();
-            target.observe = [&](const char* name, std::int32_t visit, const Tensor& value) {
+            target.observe     = [&](const char* name, std::int32_t visit, const Tensor& value) {
                 const std::size_t n = std::size_t(value.ne[0]) * value.ne[1];
                 std::vector<std::uint16_t> bits(n);
                 cudaMemcpy(bits.data(), value.data, n * 2, cudaMemcpyDeviceToHost);
@@ -81,9 +89,11 @@ int main(int argc, char** argv) {
                     sum += v[i];
                 }
                 const std::size_t last = n - std::size_t(value.ne[0]);
-                std::printf("%s visit %d slot %d layer %d sum %.6f last[0..3] %.5f %.5f %.5f %.5f\n", name, visit,
-                            visit >= 0 ? visits[std::size_t(visit)].slot : -1, visit >= 0 ? visits[std::size_t(visit)].layer : -1,
-                            sum, v[last], v[last + 1], v[last + 2], v[last + 3]);
+                std::printf(
+                    "%s visit %d slot %d layer %d sum %.6f last[0..3] %.5f %.5f %.5f %.5f\n", name,
+                    visit, visit >= 0 ? visits[std::size_t(visit)].slot : -1,
+                    visit >= 0 ? visits[std::size_t(visit)].layer : -1, sum, v[last], v[last + 1],
+                    v[last + 2], v[last + 3]);
             };
         }
         cudaStream_t s;
@@ -93,11 +103,12 @@ int main(int argc, char** argv) {
         target.observe = nullptr;
         std::printf("generated:");
         for (int g = 0; g < generate; ++g) {
-            const auto next = static_cast<std::int32_t>(std::max_element(logits.begin(), logits.end()) - logits.begin());
+            const auto next = static_cast<std::int32_t>(
+                std::max_element(logits.begin(), logits.end()) - logits.begin());
             std::printf(" %d", next);
             std::fflush(stdout);
             const std::int32_t one[1] = {next};
-            logits = target.forward(one, s);
+            logits                    = target.forward(one, s);
         }
         std::printf("\n");
     } catch (const std::exception& e) {

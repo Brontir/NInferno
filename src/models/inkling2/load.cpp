@@ -25,9 +25,12 @@ struct ControllerIds {
 
 struct LayerIds {
     Id input_norm = 0, q_norm = 0, k_norm = 0, v_norm = 0;
-    Id query = 0, key = 0, value = 0, gate = 0, relative = 0, sink = 0, output = 0, key_taps = 0, value_taps = 0;
-    Id query_clip = 0, relative_clip = 0, relative_bias = 0, key_conv = 0, value_conv = 0, output_conv = 0, ffn_conv = 0;
-    Id attention_query = 0, ffn_query = 0, ffn_norm = 0, router = 0, selection_bias = 0, message_query = 0;
+    Id query = 0, key = 0, value = 0, gate = 0, relative = 0, sink = 0, output = 0, key_taps = 0,
+       value_taps = 0;
+    Id query_clip = 0, relative_clip = 0, relative_bias = 0, key_conv = 0, value_conv = 0,
+       output_conv = 0, ffn_conv = 0;
+    Id attention_query = 0, ffn_query = 0, ffn_norm = 0, router = 0, selection_bias = 0,
+       message_query         = 0;
     bool has_attention_query = false, looped = false;
     std::vector<Id> gate_up, down;
     std::array<ControllerIds, 4> control{};
@@ -62,30 +65,33 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         const bool full = c.kinds[static_cast<std::size_t>(i)] == LayerKind::Full;
         const U extent  = U(c.extent(i));
         if (full) {
-            l.q_norm = demands.direct(p + "q_input_norm", {h}, QType::BF16);
-            l.k_norm = demands.direct(p + "k_input_norm", {h}, QType::BF16);
-            l.v_norm = demands.direct(p + "v_input_norm", {h}, QType::BF16);
+            l.q_norm     = demands.direct(p + "q_input_norm", {h}, QType::BF16);
+            l.k_norm     = demands.direct(p + "k_input_norm", {h}, QType::BF16);
+            l.v_norm     = demands.direct(p + "v_input_norm", {h}, QType::BF16);
             l.key_taps   = demands.matrix(a + "key_taps", {hkv * taps, h}, a + "key_input");
             l.value_taps = demands.matrix(a + "value_taps", {hkv * taps, h}, a + "value_input");
         } else {
             l.input_norm = demands.direct(p + "input_norm", {h}, QType::BF16);
         }
-        l.query    = demands.matrix(a + "query", {hq * d, h}, a + "query_input");
-        l.key      = demands.matrix(a + "key", {hkv * d, h}, a + "key_input");
-        l.value    = demands.matrix(a + "value", {hkv * d, h}, a + "value_input");
-        l.gate     = demands.matrix(a + "gate", {hq * d, h}, a + "query_input");
-        l.relative = demands.matrix(a + "relative", {dr * hq, h}, a + "query_input");
-        l.sink     = demands.matrix(a + "sink", {hq, h}, a + "query_input");
-        l.output   = demands.matrix(a + "output", {h, hq * d}, a + "context");
-        l.query_clip    = demands.direct(a + "query_clip", {hq, d}, QType::FP32);
-        l.relative_clip = demands.direct(a + "relative_clip", {hq, dr}, QType::FP32);
-        l.relative_bias = demands.direct(a + "relative_bias", {extent, dr}, QType::FP32);
-        l.key_conv      = demands.direct(a + "key_conv", {hkv * d, taps}, QType::FP32);
-        l.value_conv    = demands.direct(a + "value_conv", {hkv * d, taps}, QType::FP32);
-        l.output_conv   = demands.direct(a + "output_conv", {h, taps}, QType::FP32);
-        l.ffn_conv      = demands.direct(p + "moe/output_conv", {h, taps}, QType::FP32);
+        l.query               = demands.matrix(a + "query", {hq * d, h}, a + "query_input");
+        l.key                 = demands.matrix(a + "key", {hkv * d, h}, a + "key_input");
+        l.value               = demands.matrix(a + "value", {hkv * d, h}, a + "value_input");
+        l.gate                = demands.matrix(a + "gate", {hq * d, h}, a + "query_input");
+        l.relative            = demands.matrix(a + "relative", {dr * hq, h}, a + "query_input");
+        l.sink                = demands.matrix(a + "sink", {hq, h}, a + "query_input");
+        l.output              = demands.matrix(a + "output", {h, hq * d}, a + "context");
+        l.query_clip          = demands.direct(a + "query_clip", {hq, d}, QType::FP32);
+        l.relative_clip       = demands.direct(a + "relative_clip", {hq, dr}, QType::FP32);
+        l.relative_bias       = demands.direct(a + "relative_bias", {extent, dr}, QType::FP32);
+        l.key_conv            = demands.direct(a + "key_conv", {hkv * d, taps}, QType::FP32);
+        l.value_conv          = demands.direct(a + "value_conv", {hkv * d, taps}, QType::FP32);
+        l.output_conv         = demands.direct(a + "output_conv", {h, taps}, QType::FP32);
+        l.ffn_conv            = demands.direct(p + "moe/output_conv", {h, taps}, QType::FP32);
         l.has_attention_query = i > 0;
-        if (i > 0) { l.attention_query = demands.direct(p + "attention_query", {full ? 3U : 1U, h}, QType::FP32); }
+        if (i > 0) {
+            l.attention_query =
+                demands.direct(p + "attention_query", {full ? 3U : 1U, h}, QType::FP32);
+        }
         l.ffn_query      = demands.direct(p + "ffn_query", {1, h}, QType::FP32);
         l.ffn_norm       = demands.direct(p + "ffn_norm", {h}, QType::BF16);
         l.router         = demands.matrix(p + "moe/router", {e, h}, p + "moe/router_input");
@@ -97,14 +103,15 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         }
         l.looped = c.looped() && i >= c.core_start && i < c.core_end;
         if (l.looped) {
-            const U rank    = U(c.gate_rank);
-            l.message_query = demands.direct(p + "loop/message_query", {4, h}, QType::FP32);
+            const U rank         = U(c.gate_rank);
+            l.message_query      = demands.direct(p + "loop/message_query", {4, h}, QType::FP32);
             const char* roles[4] = {"q", "k", "v", "ffn"};
             for (int j = 0; j < 4; ++j) {
-                const auto lp = p + "loop/" + roles[j] + "/";
-                l.control[static_cast<std::size_t>(j)] = {demands.matrix(lp + "down", {rank, 2 * h}, lp + "pair"),
-                                                          demands.matrix(lp + "gain", {h, rank}, lp + "low_rank"),
-                                                          demands.matrix(lp + "forget", {h, rank}, lp + "low_rank")};
+                const auto lp                          = p + "loop/" + roles[j] + "/";
+                l.control[static_cast<std::size_t>(j)] = {
+                    demands.matrix(lp + "down", {rank, 2 * h}, lp + "pair"),
+                    demands.matrix(lp + "gain", {h, rank}, lp + "low_rank"),
+                    demands.matrix(lp + "forget", {h, rank}, lp + "low_rank")};
             }
         }
     }
@@ -122,8 +129,8 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
     }
     w.layers.resize(static_cast<std::size_t>(c.layers));
     for (std::int32_t i = 0; i < c.layers; ++i) {
-        const auto& l  = ids[static_cast<std::size_t>(i)];
-        auto& layer    = w.layers[static_cast<std::size_t>(i)];
+        const auto& l   = ids[static_cast<std::size_t>(i)];
+        auto& layer     = w.layers[static_cast<std::size_t>(i)];
         const bool full = c.kinds[static_cast<std::size_t>(i)] == LayerKind::Full;
         layer.kind      = c.kinds[static_cast<std::size_t>(i)];
         if (full) {
@@ -159,25 +166,27 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         const auto gate_up = prepare.packed(l.gate_up);
         const auto down    = prepare.packed(l.down);
         if (!gate_up || !down) {
-            throw std::invalid_argument("inkling2 layer " + std::to_string(i) +
-                                        ": the experts' gate_up and down must each be one stacked parent in expert order");
+            throw std::invalid_argument(
+                "inkling2 layer " + std::to_string(i) +
+                ": the experts' gate_up and down must each be one stacked parent in expert order");
         }
-        m.gate_up              = gate_up->weight;
-        m.down                 = down->weight;
-        m.expert_policy        = loading::expert_policy(*gate_up, *down);
-        ops::MoeConfig& mc     = layer.moe_config;
-        mc.top_k               = c.experts_per_tok;
-        mc.scoring             = ops::MoeScoring::Sigmoid;
-        mc.renormalize         = true;
-        mc.routed_scale        = c.route_scale;
-        mc.activation          = ops::MoeActivation::Situ;
-        mc.alpha               = c.situ_beta;
-        mc.limit               = c.situ_linear_beta;
-        mc.gate_up_layout      = ops::MoeGateUpLayout::Concatenated;
+        m.gate_up          = gate_up->weight;
+        m.down             = down->weight;
+        m.expert_policy    = loading::expert_policy(*gate_up, *down);
+        ops::MoeConfig& mc = layer.moe_config;
+        mc.top_k           = c.experts_per_tok;
+        mc.scoring         = ops::MoeScoring::Sigmoid;
+        mc.renormalize     = true;
+        mc.routed_scale    = c.route_scale;
+        mc.activation      = ops::MoeActivation::Situ;
+        mc.alpha           = c.situ_beta;
+        mc.limit           = c.situ_linear_beta;
+        mc.gate_up_layout  = ops::MoeGateUpLayout::Concatenated;
         if (l.looped) {
             layer.message_query = prepare.tensor(l.message_query);
             for (std::size_t j = 0; j < 4; ++j) {
-                layer.control[j] = {prepare.projection(l.control[j].down), prepare.projection(l.control[j].gain),
+                layer.control[j] = {prepare.projection(l.control[j].down),
+                                    prepare.projection(l.control[j].gain),
                                     prepare.projection(l.control[j].forget)};
             }
         }

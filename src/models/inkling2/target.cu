@@ -22,10 +22,14 @@
 namespace ninferno::models::inkling2 {
 namespace {
 
-constexpr std::size_t kWorkBytes = std::size_t(1) << 30; // per-call scratch (projections, MoE, attention)
+constexpr std::size_t kWorkBytes = std::size_t(1)
+                                   << 30; // per-call scratch (projections, MoE, attention)
 
 void check(cudaError_t status, const char* what) {
-    if (status != cudaSuccess) { throw std::runtime_error(std::string("inkling2: ") + what + ": " + cudaGetErrorString(status)); }
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string("inkling2: ") + what + ": " +
+                                 cudaGetErrorString(status));
+    }
 }
 
 void project(const Tensor& x, const Projection& p, Tensor& out, DeviceArena& work, cudaStream_t s) {
@@ -36,9 +40,11 @@ void project(const Tensor& x, const Projection& p, Tensor& out, DeviceArena& wor
 } // namespace
 
 Target::Target(const Model& model, std::int32_t max_context, std::int32_t max_tokens)
-    : model_(model), c_(model.config()), visits_(visit_schedule(model.config())), max_context_(max_context),
-      max_tokens_(max_tokens), work_(kWorkBytes) {
-    if (max_tokens < 1 || max_context < max_tokens) { throw std::invalid_argument("inkling2: max_tokens in [1, max_context]"); }
+    : model_(model), c_(model.config()), visits_(visit_schedule(model.config())),
+      max_context_(max_context), max_tokens_(max_tokens), work_(kWorkBytes) {
+    if (max_tokens < 1 || max_context < max_tokens) {
+        throw std::invalid_argument("inkling2: max_tokens in [1, max_context]");
+    }
     std::int32_t slots = 0;
     for (const auto& v : visits_) { slots = std::max(slots, v.slot + 1); }
     slots_.resize(static_cast<std::size_t>(slots));
@@ -46,7 +52,8 @@ Target::Target(const Model& model, std::int32_t max_context, std::int32_t max_to
         auto& slot = slots_[static_cast<std::size_t>(v.slot)];
         if (slot.capacity) { continue; }
         const bool full = c_.kinds[static_cast<std::size_t>(v.layer)] == LayerKind::Full;
-        slot.capacity   = full ? max_context : std::min(max_context, c_.sliding_window + max_tokens - 1);
+        slot.capacity =
+            full ? max_context : std::min(max_context, c_.sliding_window + max_tokens - 1);
         const std::size_t plane = std::size_t(c_.head_dim) * slot.capacity * c_.kv_heads * 2;
         slot.k                  = DeviceBuffer(plane);
         slot.v                  = DeviceBuffer(plane);
@@ -69,28 +76,35 @@ void Target::reset() {
 
 Tensor Target::state(std::int32_t slot, std::int32_t offset, std::int32_t channels) {
     auto& s = slots_[static_cast<std::size_t>(slot)];
-    return Tensor(static_cast<float*>(s.conv.p) + std::size_t(offset) * 3, DType::FP32, {3, channels});
+    return Tensor(static_cast<float*>(s.conv.p) + std::size_t(offset) * 3, DType::FP32,
+                  {3, channels});
 }
 
 Tensor Target::stream_buffer() {
-    if (pool_next_ == pool_.size()) { pool_.emplace_back(std::size_t(c_.hidden_size) * max_tokens_ * 2); }
+    if (pool_next_ == pool_.size()) {
+        pool_.emplace_back(std::size_t(c_.hidden_size) * max_tokens_ * 2);
+    }
     return Tensor(pool_[pool_next_++].p, DType::BF16, {c_.hidden_size, max_tokens_});
 }
 
 std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream_t s) {
     const std::int32_t T = static_cast<std::int32_t>(ids.size());
     if (T < 1 || T > max_tokens_ || position_ + T > max_context_) {
-        throw std::invalid_argument("inkling2: a call takes 1..max_tokens tokens inside max_context");
+        throw std::invalid_argument(
+            "inkling2: a call takes 1..max_tokens tokens inside max_context");
     }
-    const auto H = c_.hidden_size, D = c_.head_dim, Hq = c_.query_heads, Hkv = c_.kv_heads, Dr = c_.rel_width;
+    const auto H = c_.hidden_size, D = c_.head_dim, Hq = c_.query_heads, Hkv = c_.kv_heads,
+               Dr = c_.rel_width;
     const auto KV = D * Hkv;
     const auto& W = model_.weights();
     pool_next_    = 0;
     work_.reset();
     std::vector<std::int32_t> pos(static_cast<std::size_t>(T));
     for (std::int32_t t = 0; t < T; ++t) { pos[static_cast<std::size_t>(t)] = position_ + t; }
-    check(cudaMemcpyAsync(ids_.p, ids.data(), ids.size_bytes(), cudaMemcpyHostToDevice, s), "ids upload");
-    check(cudaMemcpyAsync(positions_.p, pos.data(), pos.size() * 4, cudaMemcpyHostToDevice, s), "positions upload");
+    check(cudaMemcpyAsync(ids_.p, ids.data(), ids.size_bytes(), cudaMemcpyHostToDevice, s),
+          "ids upload");
+    check(cudaMemcpyAsync(positions_.p, pos.data(), pos.size() * 4, cudaMemcpyHostToDevice, s),
+          "positions upload");
     const Tensor ids_t(ids_.p, DType::I32, {T});
     const Tensor positions(positions_.p, DType::I32, {T});
     const auto fresh = [&]() { // a [H, T] stream tensor that lives for the whole call
@@ -98,7 +112,8 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         return Tensor(b.data, DType::BF16, {H, T});
     };
     const auto tmp = [&](std::int32_t rows) { return work_.alloc(DType::BF16, {rows, T}); };
-    const auto mix = [&](const std::vector<Tensor>& states, const Tensor& cur, const Tensor& query, std::span<Tensor> outs) {
+    const auto mix = [&](const std::vector<Tensor>& states, const Tensor& cur, const Tensor& query,
+                         std::span<Tensor> outs) {
         ops::Inkling2MixStates in;
         for (const auto& b : states) { in.data[static_cast<std::size_t>(in.count++)] = b.data; }
         in.data[static_cast<std::size_t>(in.count++)] = cur.data;
@@ -135,14 +150,15 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
     Tensor prelude, bank_out;
     std::int32_t visit_index = 0, pass = -1;
     for (const auto& v : visits_) {
-        const Layer& L = W.layers[static_cast<std::size_t>(v.layer)];
+        const Layer& L  = W.layers[static_cast<std::size_t>(v.layer)];
         const bool core = c_.looped() && v.layer >= c_.core_start && v.layer < c_.core_end;
         if (core && v.layer == c_.core_start) { // a pass starts: every pass starts from the prelude
             if (++pass == 0) {
                 prelude        = cur;
                 prelude_blocks = blocks;
             } else {
-                bank.assign(blocks.begin() + std::ptrdiff_t(prelude_blocks.size()) + 1, blocks.end());
+                bank.assign(blocks.begin() + std::ptrdiff_t(prelude_blocks.size()) + 1,
+                            blocks.end());
                 bank_out = cur;
                 cur      = prelude;
                 blocks   = prelude_blocks;
@@ -168,19 +184,23 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
             for (int j = 0; j < 3; ++j) { in[j] = mixed[full ? j : 0]; }
         }
         if (messages) {
-            for (int j = 0; j < 3; ++j) { in[j] = control(in[j], msg[j], L.control[static_cast<std::size_t>(j)]); }
+            for (int j = 0; j < 3; ++j) {
+                in[j] = control(in[j], msg[j], L.control[static_cast<std::size_t>(j)]);
+            }
         }
         Tensor hq, hk, hv;
         if (full) {
             hq = rms(in[0], L.q_norm), hk = rms(in[1], L.k_norm), hv = rms(in[2], L.v_norm);
         } else if (messages) {
-            hq = rms(in[0], L.input_norm), hk = rms(in[1], L.input_norm), hv = rms(in[2], L.input_norm);
+            hq = rms(in[0], L.input_norm), hk = rms(in[1], L.input_norm),
+            hv = rms(in[2], L.input_norm);
         } else {
             hq = hk = hv = rms(in[0], L.input_norm);
         }
 
         // Self-attention.
-        Tensor q = tmp(Hq * D), k = tmp(KV), vv = tmp(KV), r = tmp(Dr * Hq), sink = tmp(Hq), gate = tmp(Hq * D);
+        Tensor q = tmp(Hq * D), k = tmp(KV), vv = tmp(KV), r = tmp(Dr * Hq), sink = tmp(Hq),
+               gate = tmp(Hq * D);
         project(hq, L.query, q, work_, s);
         project(hk, L.key, k, work_, s);
         project(hv, L.value, vv, work_, s);
@@ -200,14 +220,18 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         }
         Tensor q3(q.data, DType::BF16, {D, Hq, T}), k3(k.data, DType::BF16, {D, Hkv, T});
         Tensor v3(vv.data, DType::BF16, {D, Hkv, T}), r3(r.data, DType::BF16, {Dr, Hq, T});
-        ops::Inkling2PrepareParams prep{c_.qk_clip, c_.rel_clip, c_.rms_norm_eps, c_.log_scale_alpha, c_.log_scale_floor, full};
-        ops::inkling2_attention_prepare(q3, k3, v3, r3, L.query_clip, L.relative_clip, positions, prep, s);
+        ops::Inkling2PrepareParams prep{c_.qk_clip,         c_.rel_clip,        c_.rms_norm_eps,
+                                        c_.log_scale_alpha, c_.log_scale_floor, full};
+        ops::inkling2_attention_prepare(q3, k3, v3, r3, L.query_clip, L.relative_clip, positions,
+                                        prep, s);
         auto& slot = slots_[static_cast<std::size_t>(v.slot)];
-        Tensor kc(slot.k.p, DType::BF16, {D, slot.capacity, Hkv}), vc(slot.v.p, DType::BF16, {D, slot.capacity, Hkv});
+        Tensor kc(slot.k.p, DType::BF16, {D, slot.capacity, Hkv}),
+            vc(slot.v.p, DType::BF16, {D, slot.capacity, Hkv});
         ops::inkling2_kv_append(k3, v3, positions, slot.capacity, kc, vc, s);
         Tensor context = tmp(Hq * D);
         Tensor c3(context.data, DType::BF16, {D, Hq, T});
-        ops::Inkling2AttentionParams ap{c_.extent(v.layer), full ? 0 : c_.sliding_window, slot.capacity, max_context_};
+        ops::Inkling2AttentionParams ap{c_.extent(v.layer), full ? 0 : c_.sliding_window,
+                                        slot.capacity, max_context_};
         ops::inkling2_attention(q3, r3, sink, L.relative_bias, kc, vc, positions, ap, c3, s);
         ops::sigmoid_mul(gate, context, s);
         Tensor attn = fresh();
@@ -217,14 +241,17 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
             ops::inkling2_conv(attn, L.output_conv, Tensor(), 1, os, attn, s);
         }
 
-        // The first layer of each block starts a new residual stream; the earlier one joins the blocks.
+        // The first layer of each block starts a new residual stream; the earlier one joins the
+        // blocks.
         Tensor x;
         if (v.layer % c_.block_size == 0) {
             blocks.push_back(cur);
             x = attn;
         } else {
             x = fresh();
-            check(cudaMemcpyAsync(x.data, cur.data, std::size_t(H) * T * 2, cudaMemcpyDeviceToDevice, s), "residual copy");
+            check(cudaMemcpyAsync(x.data, cur.data, std::size_t(H) * T * 2,
+                                  cudaMemcpyDeviceToDevice, s),
+                  "residual copy");
             ops::residual_add(attn, x, s);
         }
 
@@ -236,7 +263,8 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         Tensor y  = tmp(H);
         {
             auto moe_scope = work_.scope();
-            WorkspaceArena scratch(work_.alloc_bytes(std::max<std::size_t>(ops::moe_workspace_bytes(L.moe, L.moe_config, T, T), 256)));
+            WorkspaceArena scratch(work_.alloc_bytes(
+                std::max<std::size_t>(ops::moe_workspace_bytes(L.moe, L.moe_config, T, T), 256)));
             ops::moe(fn, L.moe, L.moe_config, ops::MoeEpilogue::Store, y, scratch, s);
         }
         {
@@ -244,18 +272,22 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
             ops::inkling2_conv(y, L.ffn_conv, Tensor(), 1, fs, y, s);
         }
         Tensor out = fresh();
-        check(cudaMemcpyAsync(out.data, x.data, std::size_t(H) * T * 2, cudaMemcpyDeviceToDevice, s), "residual copy");
+        check(
+            cudaMemcpyAsync(out.data, x.data, std::size_t(H) * T * 2, cudaMemcpyDeviceToDevice, s),
+            "residual copy");
         ops::residual_add(y, out, s);
         cur = out;
         if (observe) { observe("l_out", visit_index, cur); }
         ++visit_index;
     }
 
-    // Output: the depth mix of the blocks and the stream, the final norm, the head of the last token.
-    auto scope = work_.scope();
+    // Output: the depth mix of the blocks and the stream, the final norm, the head of the last
+    // token.
+    auto scope   = work_.scope();
     Tensor mixed = tmp(H);
     mix(blocks, cur, W.output_query, std::span<Tensor>(&mixed, 1));
-    const Tensor last(static_cast<__nv_bfloat16*>(mixed.data) + std::size_t(H) * (T - 1), DType::BF16, {H, 1});
+    const Tensor last(static_cast<__nv_bfloat16*>(mixed.data) + std::size_t(H) * (T - 1),
+                      DType::BF16, {H, 1});
     Tensor hidden = work_.alloc(DType::BF16, {H, 1});
     ops::rmsnorm(last, W.final_norm, c_.rms_norm_eps, false, hidden, s);
     if (observe) { observe("result_norm", -1, hidden); }
@@ -263,7 +295,8 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
     project(hidden, W.output_head, logits, work_, s);
     ops::logit_softcap(logits, c_.softcap, s);
     std::vector<std::uint16_t> bits(static_cast<std::size_t>(c_.vocab_size));
-    check(cudaMemcpyAsync(bits.data(), logits_.p, bits.size() * 2, cudaMemcpyDeviceToHost, s), "logits download");
+    check(cudaMemcpyAsync(bits.data(), logits_.p, bits.size() * 2, cudaMemcpyDeviceToHost, s),
+          "logits download");
     check(cudaStreamSynchronize(s), "forward");
     position_ += T;
     std::vector<float> out(bits.size());
