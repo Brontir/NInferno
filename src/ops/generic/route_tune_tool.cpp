@@ -52,7 +52,8 @@
 // the description of the call the production path makes (generic::describe_call, #298): the route
 // asked and run, workspace, tile, logical traffic, prepared activation, the cost model's price and
 // the compiled kernel's resources on this board.
-// --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
+// --a8-candidates 1 admits and selects a GGUF block format, or a format with an R8 codec (q8_g32),
+// under the default policy (AllowA8):
 // the W4A8 tiles, R8 and ggml's matrix and vector kernels (the vector one alone for IQ1_M) are
 // timed and priced at every width beside the A16 routes (--routes-out, --selected-out, whose rows
 // then say a8: the AllowA8 case they time), but the W4A8 tiles and R8 never make the table, its
@@ -143,9 +144,12 @@ generic::Epilogue parse_epilogue(const std::string& s) {
 }
 
 // Whether --a8-candidates sweeps the format under AllowA8: ggml's matrix kernel or its vector
-// kernel takes it (IQ1_M has the vector kernel only, so its vec rows need the sweep too).
+// kernel takes it (IQ1_M has the vector kernel only, so its vec rows need the sweep too), or it has
+// an R8 codec (q8_g32 has neither ggml kernel, yet its decode takes R8 under AllowA8, rules_r8:
+// without the sweep no grid timed its R8 schedules, #1221).
 bool a8_sweep_format(QType qtype) {
-    return generic::ggml_mmq_format(qtype) || generic::ggml_vec_format(qtype);
+    return generic::ggml_mmq_format(qtype) || generic::ggml_vec_format(qtype) ||
+           generic::r8_supports(qtype);
 }
 
 std::vector<std::int32_t> decode_points() { return {1, 2, 3, 4, 5, 6, 7, 8, 12, 16}; }
