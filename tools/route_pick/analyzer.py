@@ -230,7 +230,11 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0):
         cyc = c['imma_w'] if '16832' in r.get('mma_shape', '') else c['imma_n']
         issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, _num(r['stall_sum']) / clk)
         unit = per * (issue + 4096.0 * bits * sms / bus)
-        return launch_ns(c, P, ctas) + pre + math.ceil(ctas / sms) * (unit + out)
+        # generic_gemm.cpp GgmlMmq: the quantizer (pre), one product launch a weight set (a gated call runs the gate's and
+        # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
+        # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch).
+        epi = launch_ns(c, P, math.ceil(n / 1024.0) * T)
+        return pre + sets * (launch_ns(c, P, ctas) + math.ceil(ctas / sms) * (unit / sets + out)) + epi
     ctas = math.ceil(n / float(Wp * R))                    # r8
     slots = sms * occupancy(c, Wp, _num(r['registers']))
     trips = k / max(_num(r['k_iter']), 1.0)
