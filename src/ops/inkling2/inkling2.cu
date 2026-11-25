@@ -436,9 +436,9 @@ void inkling2_norm_pair(const Tensor& a, const Tensor& b, Tensor& out, cudaStrea
     need(a.ne[0] == b.ne[0] && a.ne[1] == b.ne[1] && out.ne[0] == 2 * a.ne[0] &&
              out.ne[1] == a.ne[1],
          op, "a, b [H, T] and out [2H, T]");
-    norm_pair_kernel<<<dim3(2, a.ne[1]), 256, 0, stream>>>(static_cast<const __nv_bfloat16*>(a.data),
-                                                  static_cast<const __nv_bfloat16*>(b.data),
-                                                  static_cast<__nv_bfloat16*>(out.data), a.ne[0]);
+    norm_pair_kernel<<<dim3(2, a.ne[1]), 256, 0, stream>>>(
+        static_cast<const __nv_bfloat16*>(a.data), static_cast<const __nv_bfloat16*>(b.data),
+        static_cast<__nv_bfloat16*>(out.data), a.ne[0]);
     CUDA_CHECK(cudaGetLastError());
 }
 
