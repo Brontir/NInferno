@@ -226,10 +226,12 @@ def test_repeat_dead_counts_stay_dead_in_the_second_grid(tmp_path):
 def test_a_ranker_naming_a_dead_ggml_mmq_is_no_default(tmp_path):
     # The second grid's ranker names ggml_mmq at T17: no A16 call runs it there, so the default is
     # the fastest A16 route (n2) and the move stands (reversed_by_evidence, the evidence rows).
-    bands, _ = run(tmp_path, W4A8_TABLE, W4A8_ROWS, margin="0.01", evidence=[],
-                   second=(NO_W4A8_SECOND, [(17, "ggml_mmq"), (18, "n2"), (19, "n2")]),
-                   repeat=True, tokens="17-19")
+    bands, evidence = run(tmp_path, W4A8_TABLE, W4A8_ROWS, margin="0.01", evidence=[],
+                          second=(NO_W4A8_SECOND, [(17, "ggml_mmq"), (18, "n2"), (19, "n2")]),
+                          repeat=True, tokens="17-19")
     assert bands == MOVED_TO_N2
+    # The default written at T17 is n2's time, not the dead ggml_mmq's 90.
+    assert evidence == [[17, 100.0, 100.0], [18, 100.0, 100.0], [19, 100.0, 100.0]]
 
 
 def test_a_filled_count_is_dead_by_the_shape(tmp_path):
@@ -239,6 +241,18 @@ def test_a_filled_count_is_dead_by_the_shape(tmp_path):
             for r, us in (("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))]
     second = ([(t, "n2", 100.0) for t in (17, 18, 19)] + [(18, "ggml_mmq", 90.0)],
               [(t, "n2") for t in (17, 18, 19)])
+    bands, _ = run(tmp_path, [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows, evidence=[],
+                   second=second, repeat=True, tokens="17-19")
+    assert bands == MOVED_TO_N2
+
+
+def test_w4a8_in_the_second_grid_drops_ggml_mmq_from_the_first_grids_candidates(tmp_path):
+    # The first grid timed no W4A8 and has ggml_mmq ahead (90 against n2 100); the second grid
+    # timed W4A8 there, so ggml_mmq is no A16 candidate in the first grid either: n2 takes it.
+    rows = [(t, r, us) for t in (17, 18, 19) for r, us in (("n2", 100), ("ggml_mmq", 90))]
+    second = ([(t, r, us) for t in (17, 18, 19)
+               for r, us in (("n2", 100), ("ggml_mmq", 95), ("w4a8.64x64", 50))],
+              [(t, "w4a8.64x64") for t in (17, 18, 19)])
     bands, _ = run(tmp_path, [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows, evidence=[],
                    second=second, repeat=True, tokens="17-19")
     assert bands == MOVED_TO_N2
@@ -464,17 +478,6 @@ def test_a_range_route_slower_at_a_kept_count_keeps_the_entry(tmp_path):
     assert "would slow T11 past the margin, kept" in r.stderr
 
 
-if __name__ == "__main__":
-    import pathlib
-    import tempfile
-
-    for name, test in sorted(globals().items()):
-        if name.startswith("test_"):
-            with tempfile.TemporaryDirectory() as d:
-                test(pathlib.Path(d))
-            print("ok", name)
-
-
 def test_round_width_reads_the_token_tile_from_the_name():
     import importlib.util
     spec = importlib.util.spec_from_file_location("route_table_retime", TOOL)
@@ -510,3 +513,20 @@ def test_a_dead_entry_the_grid_never_timed_is_replaced(tmp_path):
     bands, _ = run(tmp_path, [[1, 16, "n1"], [17, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
                    tokens="17-19")
     assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
+
+
+if __name__ == "__main__":
+    # ctest runs this file as a script: every test, at the end of the file (#1206 review: the
+    # block above three tests left them out). A test without tmp_path is called bare.
+    import inspect
+    import pathlib
+    import tempfile
+
+    for name, test in sorted(globals().items()):
+        if name.startswith("test_"):
+            if inspect.signature(test).parameters:
+                with tempfile.TemporaryDirectory() as d:
+                    test(pathlib.Path(d))
+            else:
+                test()
+            print("ok", name)

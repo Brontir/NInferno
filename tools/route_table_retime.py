@@ -73,15 +73,14 @@ def a8_wide(times, t):
     return t >= A8_WIDE_MIN_T and any(r.startswith("w4a8") for r in times)
 
 
-def a16_routes(times, t, wide=None):
-    """The routes of one count an A16 call of the table can run. `wide`: the count may take W4A8
-    (read off `times` unless given: a grid run without --a8-candidates 1 times no W4A8)."""
-    wide = a8_wide(times, t) if wide is None else wide
+def a16_routes(times, t, wide):
+    """The routes of one count an A16 call of the table can run. `wide`: the count may take W4A8,
+    the shape's fact (main's w4a8_keys: either grid timed W4A8), not read off `times` alone."""
     return {r: us for r, us in times.items()
             if not r.startswith(NOT_TABLE_ROUTES) and not (wide and r == "ggml_mmq")}
 
 
-def default_route(times, ranker, t, wide=None):
+def default_route(times, ranker, t, wide):
     """The default an a16 band is held to at one count: the ranker where it names a route an A16
     call can run there; where it names an A8 route the table never competes with (W4A8, R8, or
     ggml_mmq at a W4A8 count), the fastest route an A16 call can run there. No ranker, or one
@@ -89,7 +88,6 @@ def default_route(times, ranker, t, wide=None):
     as in a16_routes."""
     if ranker is None:
         return None
-    wide = a8_wide(times, t) if wide is None else wide
     table = a16_routes(times, t, wide)
     if ranker in table:
         return ranker
