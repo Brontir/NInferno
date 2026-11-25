@@ -21,7 +21,7 @@ void check(cudaError_t status, const char* what) {
 } // namespace
 
 Target::Target(const Model& model, std::int32_t max_context, std::int32_t max_tokens)
-    : model_(model), c_(model.config()), pass_(model, max_tokens), max_context_(max_context),
+    : model_(model), c_(model.config()), pass_(model), max_context_(max_context),
       max_tokens_(max_tokens), work_(Pass::work_bytes(model, max_tokens)) {
     if (max_tokens < 1 || max_context < max_tokens) {
         throw std::invalid_argument("inkling2: max_tokens in [1, max_context]");

@@ -35,12 +35,12 @@ struct Bindings {
 
 class Pass {
 public:
-    // max_columns bounds T * B of every call.
-    Pass(const Model& model, std::int32_t max_columns);
+    explicit Pass(const Model& model);
 
     // tokens, positions: device I32 [T * B] (positions sequential within each batch row). Appends
     // every visit's keys and values, advances its convolution state, and returns the final-normed
-    // hidden of every column, BF16 [H, T * B], in a plane of the pass valid until the next call.
+    // hidden of every column, BF16 [H, T * B], in `work` (with the call's stream planes: the
+    // caller's scope around the call frees them).
     Tensor forward(DeviceArena& work, const Tensor& tokens, const Tensor& positions,
                    const Bindings& bound, cudaStream_t s);
 
@@ -61,13 +61,10 @@ public:
     std::function<void(const char* name, std::int32_t visit, const Tensor& value)> observe;
 
 private:
-    [[nodiscard]] Tensor plane(std::int32_t index, std::int32_t columns) const;
-
     const Model& model_;
     const Config& c_;
     std::vector<Visit> visits_;
-    std::int32_t slots_ = 0, max_columns_ = 0, max_blocks_ = 0, max_bank_ = 0;
-    DeviceBuffer planes_; // the persistent [H, max_columns] stream planes
+    std::int32_t slots_ = 0, max_blocks_ = 0, max_bank_ = 0;
 };
 
 } // namespace ninferno::models::inkling2

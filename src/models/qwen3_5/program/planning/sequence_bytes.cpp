@@ -495,6 +495,54 @@ bool plan_kv_rows_int8(const SequencePlanImpl& plan) noexcept {
            (plan.ring_storage == KvCacheStorage::Fp8E4M3Row256 && ops::kGemma4RowInt8);
 }
 
+// ---- Inkling 2 (a slot a visit of the looped schedule, docs/maintainer/inkling2-model.md): the
+// full visits' head-major pool, the sliding visits' rings, and each visit's convolution history
+// (FP32 [3, conv_channels] a slot, in the linear state's convolution plane; its recurrent plane
+// is one element, as the pool takes one).
+PersistentLayout inkling2_layout(const StateShape& shape, const SequencePlanImpl& plan) {
+    const std::int32_t slots =
+        state_image_slots(plan, "Inkling 2 context cache options are not normalized",
+                          "Inkling 2 state image slot count exceeds int32");
+    LayoutBuilder builder;
+    PersistentLayout out;
+    out.decoder = qwen3_5::plan_decoder_state(
+        builder, qwen3_5::DecoderStateSpec{
+                     .full_attention_layers     = shape.full_layers,
+                     .capacity                  = plan.capacity,
+                     .kv_heads                  = shape.kv_heads,
+                     .attention_head_dim        = shape.head_dim,
+                     .kv_storage                = KvCacheStorage::BFloat16,
+                     .kv_table_rows             = static_cast<std::int32_t>(plan.max_concurrency),
+                     .text_physical_page_groups = plan.main_page_groups,
+                     .layer_storage             = head_major_pool(KvCacheStorage::BFloat16,
+                                                                  shape.head_dim)
+                                          .layer_storage,
+                     .plane_order = PagedKVPlaneOrder::HeadMajor,
+                 });
+    out.state_images = qwen3_5::plan_state_image_device_pool(
+        builder, qwen3_5::StateImageSpec{
+                     .linear = {.layers          = shape.recurrent_layers,
+                                .conv_channels   = shape.conv_channels,
+                                .conv_width      = 3,
+                                .value_heads     = 1,
+                                .value_head_dim  = 1,
+                                .key_head_dim    = 1,
+                                .slot_count      = slots,
+                                .conv_dtype      = DType::FP32,
+                                .recurrent_dtype = DType::BF16},
+                     .hidden = shape.hidden,
+                     .rings  = {{.layers   = shape.sliding_layers,
+                                 .capacity = shape.window + ring_decoder_widest_call(plan) - 1U,
+                                 .kv_heads = shape.sliding_kv_heads,
+                                 .head_dim = shape.sliding_head_dim,
+                                 .fp8      = false,
+                                 .window   = shape.window}},
+                 });
+    plan_program_buffers(builder, plan, program_buffers_of(shape), out);
+    out.kv_payload_bytes = out.decoder.kv_payload_bytes();
+    return out;
+}
+
 PersistentLayout plan_persistent_layout(const StateShape& shape, const SequencePlanImpl& plan) {
     switch (shape.family) {
     case StateFamily::Qwen35:
@@ -505,6 +553,8 @@ PersistentLayout plan_persistent_layout(const StateShape& shape, const SequenceP
         return gemma4_layout(shape, plan);
     case StateFamily::NemotronH:
         return nemotron_h_layout(shape, plan);
+    case StateFamily::Inkling2:
+        return inkling2_layout(shape, plan);
     }
     throw std::logic_error("unknown state family");
 }
@@ -554,6 +604,14 @@ void validate_state_storage(const StateShape& shape, const EngineOptions& option
         if (options.sliding_kv_cache != KvCacheStorage::BFloat16) {
             throw std::invalid_argument(
                 "Nemotron-H has no sliding-window layers (--sliding-kv-dtype is for their rings)");
+        }
+        return;
+    case StateFamily::Inkling2:
+        // inkling2_attention reads BF16 planes only.
+        if (options.kv_cache != KvCacheStorage::BFloat16 ||
+            options.sliding_kv_cache != KvCacheStorage::BFloat16) {
+            throw std::invalid_argument("Inkling 2 keeps keys and values in BF16 (--kv-dtype bf16 "
+                                        "--sliding-kv-dtype bf16)");
         }
         return;
     }

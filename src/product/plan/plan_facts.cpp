@@ -219,6 +219,8 @@ std::string state_of(const Geometry& g, models::StateShape& s) {
     case models::StateFamily::NemotronH:
         if (s.sliding_layers != 0) { return "sliding layers in a family without rings"; }
         break;
+    case models::StateFamily::Inkling2: // not planned from a geometry (state_of names no type)
+        return "no family serves the model";
     }
     if (s.family == models::StateFamily::Qwen35 || s.family == models::StateFamily::NemotronH) {
         const auto heads = static_cast<std::uint64_t>(g.ssm_heads);

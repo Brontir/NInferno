@@ -37,10 +37,8 @@ enum Plane : std::int32_t { kCur0, kCur1, kX, kAttn, kPrelude, kBankOut, kHidden
 
 } // namespace
 
-Pass::Pass(const Model& model, std::int32_t max_columns)
-    : model_(model), c_(model.config()), visits_(visit_schedule(model.config())),
-      max_columns_(max_columns) {
-    if (max_columns < 1) { throw std::invalid_argument("inkling2: max_columns >= 1"); }
+Pass::Pass(const Model& model)
+    : model_(model), c_(model.config()), visits_(visit_schedule(model.config())) {
     for (const auto& v : visits_) { slots_ = std::max(slots_, v.slot + 1); }
     // Blocks: one a layer that starts one (layer % block_size == 0); the bank: the core's.
     for (std::int32_t l = 0; l < c_.layers; ++l) {
@@ -49,14 +47,6 @@ Pass::Pass(const Model& model, std::int32_t max_columns)
             if (c_.looped() && l >= c_.core_start && l < c_.core_end) { ++max_bank_; }
         }
     }
-    planes_ = DeviceBuffer(std::size_t(kBlocks + max_blocks_ + max_bank_) * c_.hidden_size *
-                           max_columns * 2);
-}
-
-Tensor Pass::plane(std::int32_t index, std::int32_t columns) const {
-    return Tensor(static_cast<__nv_bfloat16*>(planes_.p) +
-                      std::size_t(index) * c_.hidden_size * max_columns_,
-                  DType::BF16, {c_.hidden_size, columns});
 }
 
 std::size_t Pass::work_bytes(const Model& model, std::int32_t columns) {
@@ -66,28 +56,35 @@ std::size_t Pass::work_bytes(const Model& model, std::int32_t columns) {
         moe =
             std::max(moe, ops::moe_workspace_bytes(layer.moe, layer.moe_config, columns, columns));
     }
-    // A visit's temporaries at once (messages, mixes, the controller, the norms, the projections,
-    // the context, the MoE's input and output): below 40 H BF16 rows a column; the projections'
-    // own scratch (an A8 call's quantized activation) below 4 H bytes a column more.
-    const std::size_t per_column = std::size_t(44) * c.hidden_size * 2;
+    // The stream planes (kBlocks + the blocks + the bank, below 16 H rows) and a visit's
+    // temporaries at once (messages, mixes, the controller, the norms, the projections, the
+    // context, the MoE's input and output): below 40 H BF16 rows a column; the projections' own
+    // scratch (an A8 call's quantized activation) below 4 H bytes a column more.
+    const std::size_t per_column = std::size_t(60) * c.hidden_size * 2;
     return per_column * columns + moe + (std::size_t(64) << 20);
 }
 
 Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& positions,
                      const Bindings& bound, cudaStream_t s) {
     const std::int32_t n = tokens.ne[0], B = bound.batch;
-    if (n < 1 || n > max_columns_ || B < 1 || n % B != 0 || positions.ne[0] != n ||
+    if (n < 1 || B < 1 || n % B != 0 || positions.ne[0] != n ||
         bound.kv.size() != static_cast<std::size_t>(slots_) ||
         bound.conv.size() != static_cast<std::size_t>(slots_)) {
         throw std::invalid_argument(
-            "inkling2: a call takes T * B <= max_columns columns and a binding a visit slot");
+            "inkling2: a call takes T * B columns and a binding a visit slot");
     }
     const std::int32_t T = n / B;
     const auto H = c_.hidden_size, D = c_.head_dim, Hq = c_.query_heads, Hkv = c_.kv_heads,
                Dr   = c_.rel_width;
     const auto KV   = D * Hkv;
     const auto& W   = model_.weights();
-    const auto P    = [&](std::int32_t index) { return plane(index, n); };
+    // The call's stream planes, in `work` for the call (the caller's scope frees them).
+    const Tensor planes =
+        work.alloc(DType::BF16, {H, n * (kBlocks + max_blocks_ + max_bank_)});
+    const auto P = [&](std::int32_t index) {
+        return Tensor(static_cast<__nv_bfloat16*>(planes.data) + std::size_t(index) * H * n,
+                      DType::BF16, {H, n});
+    };
     const auto tmp  = [&](std::int32_t rows) { return work.alloc(DType::BF16, {rows, n}); };
     const auto copy = [&](const Tensor& from, Tensor to) {
         check(cudaMemcpyAsync(to.data, from.data, std::size_t(H) * n * 2, cudaMemcpyDeviceToDevice,
