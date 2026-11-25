@@ -45,8 +45,8 @@ Tensor table(const Prepare& prepare, Id id) {
         return weight_tensor(
             v, {static_cast<std::int32_t>(v.shape[1]), static_cast<std::int32_t>(v.shape[0])});
     }
-    throw std::invalid_argument("inkling2: a direct parameter of " + std::to_string(v.shape.size()) +
-                                " dimensions");
+    throw std::invalid_argument("inkling2: a direct parameter of " +
+                                std::to_string(v.shape.size()) + " dimensions");
 }
 
 } // namespace
