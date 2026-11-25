@@ -109,17 +109,28 @@ times) and its convolution state. KV per token: 8 full visits x 8 x 128 x 2 x 2 
 ## Program integration (serve)
 
 The standalone `Target` (one sequence, plain launches) qualifies the mathematics. The serving
-family runs the same visits over the Program's state, which already holds every kind Inkling 2
-needs:
+family (`models/inkling2/program_family.cpp`, loaded by `runtime/engine/inkling2_family.cpp` for
+`inkling2_text` artifacts) runs the same `Pass` over the Program's state:
 
-- the 8 full-attention visit slots' keys and values in the paged pool (`full_layers`), the 40
-  sliding slots' in rings of each sequence's state image (`sliding_layers`, as the dense decoder);
-- the 48 convolution states in the state image's convolution part (the GatedDeltaNet layout:
-  `conv_width` 3 rows of `conv_channels` 6656 = K + V + attention output + expert output, no
-  recurrent part). A state row holds past inputs, which are BF16 already, so BF16 state is exact.
+- visit slot i's keys and values: the paged pool for the 8 full slots (`full_layers`, head-major
+  BF16 pages), a ring in each sequence's state image for the 40 sliding slots (`sliding_layers`,
+  window + the widest call - 1 rows), both through `program::ring_decoder_bindings`;
+- visit slot i's convolution history: layer i of the state image's linear planes
+  (`recurrent_layers` 48, `conv_channels` 6656 = K + V + attention output + expert output,
+  `conv_width` 3, FP32), the kernel's `Inkling2ConvState` with the slot stride 3 x 6656 and each
+  batch row's state slot;
+- a fork (a prefix checkpoint's first write) copies the source's rings and its linear slot; a
+  fresh sequence's slot is zeroed by the Program.
 
-A `StateFamily::Inkling2` names that layout; prefill, ordinary decode and the decode graph follow
-`models/dense/program_family.cpp`.
+`StateFamily::Inkling2` names that layout (`sequence_bytes.cpp`, `inkling2_layout`); the keys and
+values stay BF16 (`validate_state_storage`). Prefill and ordinary decode (captured as a decode
+graph) follow the Gemma 4 family without its MTP and vision paths. No speculative backend. The
+plan without the weights (`product/plan/plan_facts.cpp`, `state_of`) does not size Inkling 2 yet:
+the server's automatic configuration choice leaves its axes to the engine's defaults.
+
+First serve measurement (RTX 4090, Inkling-2-Mini UD-Q4_K_M, 256 tokens a stream, greedy):
+97.3 tokens/s at one stream and 260 at four, against llama.cpp's llama-server on the same GGUF
+at 78.3 and 188.
 
 ## Decode cost (first form)
 
