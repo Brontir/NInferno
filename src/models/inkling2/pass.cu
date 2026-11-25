@@ -61,7 +61,8 @@ std::size_t Pass::work_bytes(const Model& model, std::int32_t columns) {
     const Config& c = model.config();
     std::size_t moe = 256;
     for (const auto& layer : model.weights().layers) {
-        moe = std::max(moe, ops::moe_workspace_bytes(layer.moe, layer.moe_config, columns, columns));
+        moe =
+            std::max(moe, ops::moe_workspace_bytes(layer.moe, layer.moe_config, columns, columns));
     }
     // A visit's temporaries at once (messages, mixes, the controller, the norms, the projections,
     // the context, the MoE's input and output): below 40 H BF16 rows a column; the projections'
@@ -81,11 +82,11 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
     }
     const std::int32_t T = n / B;
     const auto H = c_.hidden_size, D = c_.head_dim, Hq = c_.query_heads, Hkv = c_.kv_heads,
-               Dr = c_.rel_width;
-    const auto KV = D * Hkv;
-    const auto& W = model_.weights();
-    const auto P  = [&](std::int32_t index) { return plane(index, n); };
-    const auto tmp = [&](std::int32_t rows) { return work.alloc(DType::BF16, {rows, n}); };
+               Dr   = c_.rel_width;
+    const auto KV   = D * Hkv;
+    const auto& W   = model_.weights();
+    const auto P    = [&](std::int32_t index) { return plane(index, n); };
+    const auto tmp  = [&](std::int32_t rows) { return work.alloc(DType::BF16, {rows, n}); };
     const auto copy = [&](const Tensor& from, Tensor to) {
         check(cudaMemcpyAsync(to.data, from.data, std::size_t(H) * n * 2, cudaMemcpyDeviceToDevice,
                               s),
@@ -124,7 +125,7 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
         return st;
     };
     std::int32_t visit_index = 0;
-    const auto see = [&](const char* name, const Tensor& t) {
+    const auto see           = [&](const char* name, const Tensor& t) {
         if (observe && visit_index == 0) {
             check(cudaStreamSynchronize(s), "observe");
             observe(name, -1, t);
@@ -158,8 +159,8 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
                 // reuses.
                 bank.clear();
                 for (std::size_t i = prelude_blocks.size() + 1; i < blocks.size(); ++i) {
-                    bank.push_back(copy(
-                        blocks[i], P(kBlocks + max_blocks_ + static_cast<std::int32_t>(bank.size()))));
+                    bank.push_back(copy(blocks[i], P(kBlocks + max_blocks_ +
+                                                     static_cast<std::int32_t>(bank.size()))));
                 }
                 bank_out = copy(cur, P(kBankOut));
                 cur      = prelude;
@@ -228,9 +229,8 @@ Tensor Pass::forward(DeviceArena& work, const Tensor& tokens, const Tensor& posi
         }
         Tensor q3(q.data, DType::BF16, {D, Hq, n}), k3(k.data, DType::BF16, {D, Hkv, n});
         Tensor v3(vv.data, DType::BF16, {D, Hkv, n}), r3(r.data, DType::BF16, {Dr, Hq, n});
-        const ops::Inkling2PrepareParams prep{c_.qk_clip,         c_.rel_clip,
-                                              c_.rms_norm_eps,    c_.log_scale_alpha,
-                                              c_.log_scale_floor, full};
+        const ops::Inkling2PrepareParams prep{
+            c_.qk_clip, c_.rel_clip, c_.rms_norm_eps, c_.log_scale_alpha, c_.log_scale_floor, full};
         ops::inkling2_attention_prepare(q3, k3, v3, r3, L.query_clip, L.relative_clip, positions,
                                         prep, s);
         see("Qcur-0", q);

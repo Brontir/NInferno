@@ -39,8 +39,8 @@ Target::Target(const Model& model, std::int32_t max_context, std::int32_t max_to
         const std::size_t plane = std::size_t(c_.head_dim) * slot.capacity * c_.kv_heads * 2;
         slot.k                  = DeviceBuffer(plane);
         slot.v                  = DeviceBuffer(plane);
-        slot.conv = DeviceBuffer(std::size_t(c_.conv_channels()) * 3 * sizeof(float));
-        auto& kv  = kv_[static_cast<std::size_t>(v.slot)];
+        slot.conv               = DeviceBuffer(std::size_t(c_.conv_channels()) * 3 * sizeof(float));
+        auto& kv                = kv_[static_cast<std::size_t>(v.slot)];
         kv.k      = Tensor(slot.k.p, DType::BF16, {c_.head_dim, slot.capacity, c_.kv_heads});
         kv.v      = Tensor(slot.v.p, DType::BF16, {c_.head_dim, slot.capacity, c_.kv_heads});
         kv.window = full ? 0 : c_.sliding_window;
