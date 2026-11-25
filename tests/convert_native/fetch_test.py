@@ -615,6 +615,19 @@ def main() -> int:
                  and "tokenizer.json: rebuilt" in half_notes and "tokenizer_config.json: rebuilt" in half_notes)
             if half.returncode:
                 errors.append(half.stderr[-1500:])
+            # Another model's tokenizer.json beside the GGUF (the convert drops it): the base gives
+            # the pair, not tokenizer_config.json alone beside a rebuilt tokenizer.json.
+            gguf_foreign, _, _ = synthetic_gguf.qwen_case(work / "qwen-src5", False, None, 34, rebuilt=True,
+                                                          base_model="https://huggingface.co/org/qwen-base")
+            foreign = json.dumps({"model": {"vocab": {f"x{i}": i for i in range(8)}}, "added_tokens": []}).encode()
+            hub.add_repo("org/qwen-gguf5", {"model-Q8_0.gguf": gguf_foreign.read_bytes(), "tokenizer.json": foreign})
+            beside = subprocess.run([str(native), "--fetch", "org/qwen-gguf5", "--cache", str(work / "cache-e2e")],
+                                    cwd=repository, capture_output=True, text=True, env=environment)
+            case("another model's tokenizer.json beside the GGUF: the base gives both (#1218)",
+                 beside.returncode == 0
+                 and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in beside.stdout)
+            if beside.returncode:
+                errors.append(beside.stderr[-1500:])
 
             # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
             # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),
