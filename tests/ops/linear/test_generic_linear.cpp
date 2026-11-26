@@ -954,6 +954,19 @@ int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     return 0;
 }
 
+// Whether run_route hands this call to Volta's HMMA kernel (its RegisterMma case: volta_hmma_takes
+// on the call's args) and not to the emulated register-MMA tile. That tile is also accurate,
+// token-invariant and applies both divisors, so the checks below alone cannot tell the two apart
+// (#1216).
+bool volta_hmma_runs(const Weight& w, const void* x, std::int32_t tokens) {
+    generic::GemmArgs args = generic::weight_args(w);
+    args.x                 = x;
+    args.ldx               = w.k;
+    args.tokens            = tokens;
+    args.lane_local        = ops::invariant_routes_active() ? 0 : 1;
+    return generic::volta_hmma_takes(generic::codec_of(w), args);
+}
+
 // Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): the dispatch takes it
 // for Q4_K / Q5_K / Q6_K / Q8 at 1..16 tokens (5..16 with an int8 route), and a token's output
 // bytes equal those of the same token in a call of any other width there (at any start), repeated
@@ -975,7 +988,10 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
                                                    : generic::Epilogue::Store};
     const auto run = [&](std::int32_t offset, std::int32_t t, std::vector<std::uint16_t>& bits) {
         const generic::Route route = generic::select_route(problem, device.weight, t, false);
-        if (route.family != generic::Family::RegisterMma) return false;
+        const auto* at = static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k;
+        if (route.family != generic::Family::RegisterMma || !volta_hmma_runs(device.weight, at, t)) {
+            return false;
+        }
         DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
         if (op == Op::Add) {
             out.copy_from_host(residual.data() + static_cast<std::size_t>(offset) * out_rows,
@@ -1004,7 +1020,7 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
     std::vector<std::uint16_t> reference, again;
     int failures = 0;
     if (!run(0, 16, reference) || !run(0, 16, again) || reference != again) {
-        std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=16 not the register-MMA route"
+        std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=16 not Volta's HMMA kernel"
                   << " or not repeatable\n";
         return 1;
     }
@@ -1017,7 +1033,7 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
         std::vector<std::uint16_t> bits;
         if (!run(offset, t, bits)) {
             std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=" << t
-                      << " not the register-MMA route\n";
+                      << " not Volta's HMMA kernel\n";
             ++failures;
             continue;
         }
@@ -1061,8 +1077,8 @@ int check_volta_hmma_accuracy(const Format& f, std::int32_t k, float mean, std::
     const generic::Problem problem{f.qtype, ops::LinearPolicy::A16Only, rows, k,
                                    generic::Epilogue::Store};
     const generic::Route route = generic::select_route(problem, device.weight, t, false);
-    if (route.family != generic::Family::RegisterMma) {
-        std::cerr << f.name << " Volta HMMA accuracy: T=8 not the register-MMA route\n";
+    if (route.family != generic::Family::RegisterMma || !volta_hmma_runs(device.weight, x.p, t)) {
+        std::cerr << f.name << " Volta HMMA accuracy: T=8 not Volta's HMMA kernel\n";
         return 1;
     }
     Tensor tx(x.p, DType::BF16, {k, t});
@@ -1138,8 +1154,8 @@ int check_volta_hmma_two_divisors(std::int32_t k, std::uint32_t seed) {
     const generic::Problem problem{f.qtype, ops::LinearPolicy::A16Only, rows, k,
                                    generic::Epilogue::SwiGlu};
     const generic::Route route = generic::select_route(problem, weight, t, false);
-    if (route.family != generic::Family::RegisterMma) {
-        std::cerr << "nvfp4 Volta HMMA two divisors: T=8 not the register-MMA route\n";
+    if (route.family != generic::Family::RegisterMma || !volta_hmma_runs(weight, x.p, t)) {
+        std::cerr << "nvfp4 Volta HMMA two divisors: T=8 not Volta's HMMA kernel\n";
         return 1;
     }
     Tensor tx(x.p, DType::BF16, {k, t});
