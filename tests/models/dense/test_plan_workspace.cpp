@@ -799,7 +799,7 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
 }
 
 // Inkling 2's declines: the options its start refuses (int8 activations, a narrow state, Vision,
-// speculation, a Volta board without BF16 MMA), a pin, the tokenizer, the directory.
+// speculation), a pin, the tokenizer, the directory.
 void inkling2_declines(const rt::PlanModelFacts& facts, const DeviceClass& device) {
     const std::string name      = "Inkling-2-Mini";
     const EngineOptions options = options_of(32768, 2048, 1);
@@ -831,13 +831,6 @@ void inkling2_declines(const rt::PlanModelFacts& facts, const DeviceClass& devic
     EngineOptions vision = options;
     vision.enable_vision = true;
     refuses(basis_of(facts, vision, device), "Vision", "Vision");
-    {
-        // A board without BF16 MMA (a GV100 class): the start requires it.
-        const DeviceClass volta  = board(0x1DBA, 7, 0, 80, 6);
-        const std::string answer = basis_of(facts, options, volta);
-        check(answer.rfind("formula: ", 0) == 0 && answer.find("BF16 MMA") != std::string::npos,
-              name + ": a board without BF16 MMA keeps the formula, by name (" + answer + ")");
-    }
     EngineOptions pinned       = options;
     pinned.maintainer.moe_path = MoePath::Generic;
     refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");

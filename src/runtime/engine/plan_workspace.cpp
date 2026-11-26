@@ -594,8 +594,8 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
 // as load_inkling2 calls it first; speculation; Vision), under a --moe-path pin (its experts are
 // routed), where the tokenizer names more ids than the model's vocabulary (config.vocab_size, the
 // embedding rows the start's frontend checks against), where load would refuse the weights or a
-// binding needs the payload, and where no device class is known or it has no BF16 MMA (Volta; the
-// start requires it).
+// binding needs the payload, and where no device class is known. (The start's BF16 MMA requirement
+// holds on every supported board: Volta's and Turing's builds compose it, DeviceFeatures.)
 PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOptions& options,
                                        const detail::SequencePlanImpl* plan) {
     if (m.model_type != "inkling2_text") { return {}; }
@@ -624,11 +624,6 @@ PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOpti
         if (device_class().sms <= 0) { throw std::runtime_error("no multiprocessors"); }
     } catch (const std::exception&) {
         return {std::nullopt, "no device class to size the routes for"};
-    }
-    // The start requires BF16 MMA (require_device_support); the class's features, not the host
-    // GPU's image: a --plan-device what-if sizes another board.
-    if (!has_features(device_class().features, {.mma_bf16 = true})) {
-        return {std::nullopt, "the start refuses it: Inkling 2 needs BF16 MMA (sm_75 on)"};
     }
     std::string why;
     const auto model = described_model<models::inkling2::Model>(m.artifact_directory, 0, why);
