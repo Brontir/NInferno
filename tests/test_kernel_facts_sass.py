@@ -251,6 +251,17 @@ class LoopFinder(unittest.TestCase):
         body = body_of(lines + loop)
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
         self.assertIsNone(sc.switch_targets(body, i))
+        # A dead block before the switch (after an unconditional BRA, entered by nothing) whose
+        # branch lands on that case enters nothing: the walk starts at the entry.
+        dead = body_of([(0x000, "MOV R1, R2 ;"), (0x010, "BRA 0x030 ;"), (0x020, "BRA 0x060 ;"),
+                        (0x030, "BRXU UR4 -0x40 ;"), (0x040, "FADD R36, R36, R30 ;"),
+                        (0x050, "EXIT ;"), (0x060, "FADD R36, R36, R30 ;"), (0x070, "BRA 0x040 ;")])
+        self.assertFalse(sc.tail_reached(dead, 5))
+        live = [(o, "@P0 BRA 0x020 ;" if o == 0x010 else t) for o, t in
+                [(0x000, "MOV R1, R2 ;"), (0x010, ""), (0x020, "BRA 0x060 ;"), (0x030, "BRXU UR4 -0x40 ;"),
+                 (0x040, "FADD R36, R36, R30 ;"), (0x050, "EXIT ;"), (0x060, "FADD R36, R36, R30 ;"),
+                 (0x070, "BRA 0x040 ;")]]
+        self.assertTrue(sc.tail_reached(body_of(live), 5))
         # tail_reached follows successors' edges: a callee's branch with a predicate operand, a
         # guarded RET and an unguarded BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
         # code after an unguarded KILL is entered by nothing.

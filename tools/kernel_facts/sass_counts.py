@@ -353,14 +353,16 @@ def branch_edges(guarded, opcode, operands):
 
 def tail_reached(body, last_exit):
     """Whether every instruction after the function's last unconditional EXIT (index `last_exit`)
-    is entered from the body: by a BRA / JMP / CALL that can be taken from an instruction before
-    that EXIT, or from a tail instruction that is itself so entered (its target, or its
-    fall-through). A jump-table case placed after that EXIT would be entered only by the table, so
-    switch_targets would leave it out of the counts silently (#1231); such an instruction makes
-    the flow unknown instead. An edge inside an otherwise unentered part of the tail (a local back
-    edge, BRA 0x500 at 0x510) enters nothing. NOPs and the closing self-branch (BRA to itself, the
-    padding) are exempt. The fall-through follows branch_edges; an indirect branch in the tail
-    ends the run (successors would give it switch targets), which errs toward unknown flow."""
+    is reached from the function's entry. The walk starts at the first instruction and follows
+    each instruction's explicit target (a BRA / JMP that can be taken, a CALL) and its
+    fall-through (branch_edges); an indirect branch before that EXIT enters every instruction
+    after it up to the EXIT (switch_targets' own over-approximation of its cases), one in the tail
+    ends the run (successors would give it switch targets), which errs toward unknown flow. A
+    jump-table case placed after that EXIT would be entered only by the table, so switch_targets
+    would leave it out of the counts silently (#1231); such an instruction makes the flow unknown
+    instead. Code the entry never reaches enters nothing: neither a dead block before the EXIT
+    that branches into the tail nor a local back edge inside an unentered part of the tail (BRA
+    0x500 at 0x510). NOPs and the closing self-branch (BRA to itself, the padding) are exempt."""
     def edge(k):
         """(the explicit target offset or None, may fall through) of instruction k."""
         _, guarded, opcode, operands, *_ = body[k]
@@ -376,9 +378,8 @@ def tail_reached(body, last_exit):
         return target, falls
 
     tail = range(last_exit + 1, len(body))
-    index = {body[k][0]: k for k in tail}
-    entered = {edge(k)[0] for k in range(last_exit + 1)} & set(index)
-    reached, work = set(), [index[o] for o in entered]
+    index = {body[k][0]: k for k in range(len(body))}
+    reached, work = set(), [0] if body else []
     while work:
         k = work.pop()
         if k in reached:
@@ -389,6 +390,8 @@ def tail_reached(body, last_exit):
             work.append(index[target])
         if falls and k + 1 < len(body):
             work.append(k + 1)
+        if k < last_exit and base_opcode(body[k][2]).startswith(("BRX", "JMX")):
+            work.extend(range(k + 1, last_exit + 1))
     for k in tail:
         offset, opcode = body[k][0], base_opcode(body[k][2])
         padding = opcode == "NOP" or (opcode == "BRA" and edge(k)[0] == offset)
