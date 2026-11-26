@@ -12,7 +12,9 @@
 #include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_select_internal.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
 #include <exception>
 #include <span>
@@ -88,7 +90,27 @@ bool spread_measured() { return device_gates().spread; }
 
 bool pdl_device() { return device_gates().pdl; }
 
+// LAB (#1199, not for merge): NINFERNO_LAB_RMMA_CAP_WARPS=W holds every register-MMA launch to
+// floor(W / warps a CTA) CTAs a SM (at least one) by dynamic shared memory, whatever the call.
+int lab_rmma_cap(Route route) {
+    static const int cap = [] {
+        const char* v = std::getenv("NINFERNO_LAB_RMMA_CAP_WARPS");
+        return v != nullptr ? std::atoi(v) : 0;
+    }();
+    if (cap <= 0 || route.family != Family::RegisterMma) return -1;
+    try {
+        const RmmaScheduleInfo g = rmma_schedule_info(route.schedule);
+        const int warps          = g.warps_m * g.warps_k;
+        const int ctas           = std::max(cap / warps, 1);
+        const auto& device       = device_class();
+        const std::size_t pad =
+            (device.smem_per_sm / static_cast<std::size_t>(ctas + 1) + 1024) / 1024 * 1024;
+        return pad > kStaticSharedBytesPerBlock ? -1 : static_cast<int>(pad);
+    } catch (const std::exception&) { return -1; }
+}
+
 int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArgs& args) {
+    if (const int lab = lab_rmma_cap(route); lab >= 0) return lab;
     if (route.family != Family::RegisterMma || route.schedule != rmma_index(1, 8, 1, 1, 1) ||
         epilogue != Epilogue::Store || args.tokens > 8 ||
         !(codec == WeightCodec::Nvfp4 || codec == WeightCodec::Fp8 ||
