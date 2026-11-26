@@ -209,6 +209,13 @@ def window(c, P, bw):
     return c['l0'] + max(bw - 512.0, 0.0) / c['fill'] / c['clk']
 
 
+def cluster_cap(c, C):
+    """The CTAs an SM a launch of C-CTA clusters holds on this board: the cluster facts' slots an SM over its SMs, in
+    whole clusters (the nearest, one at least), as CTAs an SM (#1228, #1234; route_analyzer.cpp price_rmma alike)."""
+    sms = c['sms']
+    return C * max(1.0, float(math.floor(c['cluster'][C]['slots_sm'] * sms / C + 0.5))) / sms
+
+
 def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     """ns of one register-MMA launch: rounds of the CTAs the SMs hold (registers), a round = hypot(SM side, DRAM side).
     SM side: K trips x tau + the code outside the loop, plus the wave term (every warp's K step waits one K step's bytes
@@ -226,7 +233,7 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
         # whatever the threads): the cluster facts' slots an SM over this board's SMs, in whole clusters (the nearest:
         # the RTX 5090's 328 CTAs at C 8 give the RTX 5070 Ti 17 clusters, 136 CTAs, as its own launch holds), as CTAs
         # an SM (#1228, #1234).
-        occ = min(occ, C * math.floor(c['cluster'][C]['slots_sm'] * sms / C + 0.5) / sms)
+        occ = min(occ, cluster_cap(c, C))
     kiter, slots = _num(r['k_iter'], 256.0), sms * occ
     trips = k / (B * C * kiter)
     nfull = math.floor(ctas / slots)

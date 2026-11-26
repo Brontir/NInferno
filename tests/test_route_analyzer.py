@@ -56,6 +56,16 @@ def main():
                     failures += 1
                     if failures <= 10:
                         print('FAIL', g.get('name'), shape, sorted(prices.items())[:3])
+    # The cluster cap in whole clusters (#1228, #1234): the RTX 5090's measured slots (C 2: 340, C 8: 328 = 41
+    # clusters) and the RTX 5070 Ti's own launch (clocc: C 8 17 clusters, 136 CTAs) from the 5090's facts.
+    for name, sms, c2, c8 in (('RTX 5090', 170, 340, 328), ('RTX 5070 Ti', 70, 140, 136)):
+        card = analyzer.card_of(F['gpus'][name], F)
+        assert int(card['sms']) == sms, name
+        for C, want in ((2, c2), (8, c8)):
+            got = analyzer.cluster_cap(card, C) * card['sms']
+            if abs(got - want) > 1e-9:
+                failures += 1
+                print('FAIL cluster cap', name, C, got, want)
     # A card of an architecture without the analyzer's facts (sm_80 here): no price, no candidate, no error.
     no_facts = dict(bs[0], cc=80)
     one = dict(format='q4k', epilogue='store', n=4096, k=4096, T=1)

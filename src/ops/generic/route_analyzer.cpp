@@ -364,7 +364,8 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     // in whole clusters (the nearest: the RTX 5090's 328 CTAs at C 8 give the RTX 5070 Ti 17
     // clusters, 136 CTAs, as its own launch holds), as CTAs an SM (#1228, #1234).
     const Card::ClusterSize* cl = C > 1 ? c.cluster(C) : nullptr;
-    const double whole          = cl ? C * std::floor(cl->slots_sm * sms / C + 0.5) / sms : 0.0;
+    const double whole =
+        cl ? C * std::max(1.0, std::floor(cl->slots_sm * sms / C + 0.5)) / sms : 0.0;
     const double occ =
         cl ? std::min(occupancy(c, warps, r.registers), whole) : occupancy(c, warps, r.registers);
     const double kiter = loop_i(r, &LoopCounts::k_iter), slots = sms * occ;

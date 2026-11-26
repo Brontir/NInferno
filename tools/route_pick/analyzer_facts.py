@@ -12,6 +12,7 @@ vec, vecmma, and on sm_70 the Volta substitutes vhmma / vgemv / vgemvr).
 NARROW below holds the narrow-load facts per arch (probe narrow.cu, #1183) until they are in isa_facts.json.
 """
 import json
+import math
 import os
 import re
 
@@ -97,9 +98,14 @@ def load_facts(root):
             if int(ca['cc']) != int(a['cc']):
                 raise ValueError('isa facts sm_%s: the cluster entry is a run of cc %s' % (arch, ca['cc']))
             cf, d['cluster'] = ca.get('facts', {}), {}
+            if not isinstance(ca.get('sms'), int) or isinstance(ca['sms'], bool) or ca['sms'] <= 0:
+                raise ValueError('isa facts sm_%s: the cluster entry sms is not a positive count' % arch)
             for n, v in cf.items():
-                if not isinstance(v.get('value'), (int, float)) or not v['value'] > 0:
+                x = v.get('value')
+                if isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) or not x > 0:
                     raise ValueError('isa facts sm_%s: cluster fact %s is not a positive number' % (arch, n))
+                if v.get('unit') != ('ctas' if n.startswith('cluster_slots_') else 'ns'):
+                    raise ValueError('isa facts sm_%s: cluster fact %s is in %s' % (arch, n, v.get('unit')))
             for C in (2, 8):
                 names = ('cluster_sync_ns_c%d' % C, 'cluster_rank_ns_c%d_s1' % C, 'cluster_rank_ns_c%d_s2' % C,
                          'cluster_slots_c%d' % C)
