@@ -11,15 +11,18 @@
 
 #include "core/arena.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/linear/linear_test_common.h"
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
+#include "ops/route_pins.h"
 
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -186,62 +189,85 @@ int main() {
     };
     int failures = 0, paired = 0, invariant = 0, matrix_paired = 0;
     for (const auto& p : pairs) {
-        int pair_paired = 0;
-        for (const auto& [rows, k] : std::vector<std::pair<std::int32_t, std::int32_t>>{
-                 {640, 5120}, {336, 2560}, {200, 1280}, {128, 2880}}) {
-            // K 2880 (gpt-oss): whole blocks of the 32-value formats only.
-            const auto small = [](QType q) {
-                return q == QType::GGML_Q4_0 || q == QType::GGML_Q4_1 || q == QType::GGML_Q5_0 ||
-                       q == QType::GGML_Q5_1 || q == QType::GGML_IQ4_NL;
-            };
-            if (k % 256 != 0 && !(small(p.gate) && small(p.up))) continue;
-            for (const bool gelu : {false, true}) {
-                if (gelu && p.gate != p.up && p.gate != QType::GGML_IQ3_XXS) continue;
-                const std::uint32_t seed = 101U + static_cast<std::uint32_t>(k);
-                const Result wide        = check(p, rows, k, 8, gelu, seed);
-                failures += wide.failures;
-                paired += wide.paired ? 1 : 0;
-                pair_paired += wide.paired ? 1 : 0;
-                // The matrix kernel's band (whole 128-row tiles): against the FP64 reference only,
-                // the tuner picks its route per width.
-                for (const std::int32_t t : {9, 12, 16}) {
-                    if (rows % 128 != 0) continue;
-                    const Result matrix = check(p, rows, k, t, gelu, seed);
-                    failures += matrix.failures;
-                    matrix_paired += matrix.paired ? 1 : 0;
-                }
-                // A prefill of two of the matrix kernel's slices (one shape: the FP64
-                // reference grows with T).
-                if (rows == 640 && k == 5120) {
-                    const Result prefill = check(p, 256, 1024, 520, gelu, seed);
-                    failures += prefill.failures;
-                }
-                for (const std::int32_t t : {1, 2, 3, 4, 5, 6, 7}) {
-                    const Result narrow = check(p, rows, k, t, gelu, seed);
-                    failures += narrow.failures;
-                    paired += narrow.paired ? 1 : 0;
-                    pair_paired += narrow.paired ? 1 : 0;
-                    if (!(narrow.paired && wide.paired)) continue;
-                    // The activation of token j is the same at both widths (seeded by column).
-                    const auto a8 = make_linear_activation(k, 8, seed + 7U, ActivationCompute::A8);
-                    const auto at = make_linear_activation(k, t, seed + 7U, ActivationCompute::A8);
-                    if (!std::equal(at.begin(), at.end(), a8.begin())) continue;
-                    ++invariant;
-                    if (std::memcmp(narrow.bits.data(), wide.bits.data(), narrow.bits.size() * 2) !=
-                        0) {
-                        std::cerr << "FAIL " << name(p.gate) << "/" << name(p.up) << " [" << rows
-                                  << "," << k << "]: T=" << t
-                                  << " tokens differ from the same tokens at T=8\n";
-                        ++failures;
+        // Where the engine's analyzer answers the narrow widths (route_analyzer.h device_routes:
+        // T 1-8 off the held chips), it alone decides them (#1227) and may price the vector pair
+        // out of every one. A second pass under the legacy route policy (no analyzer there) still
+        // requires the pair, so its arithmetic and the width comparison stay checked on every
+        // board; the first pass checks whatever route the analyzer takes.
+        bool analyzer_answers = false; // the engine's analyzer prices a narrow call of this pair
+        for (const bool legacy : {false, true}) {
+            if (legacy && !analyzer_answers) break;
+            std::optional<ops::ScopedRoutePolicy> scope;
+            if (legacy) scope.emplace(RoutePolicy::Legacy);
+            int pair_paired = 0;
+            for (const auto& [rows, k] : std::vector<std::pair<std::int32_t, std::int32_t>>{
+                     {640, 5120}, {336, 2560}, {200, 1280}, {128, 2880}}) {
+                // K 2880 (gpt-oss): whole blocks of the 32-value formats only.
+                const auto small = [](QType q) {
+                    return q == QType::GGML_Q4_0 || q == QType::GGML_Q4_1 ||
+                           q == QType::GGML_Q5_0 || q == QType::GGML_Q5_1 ||
+                           q == QType::GGML_IQ4_NL;
+                };
+                if (k % 256 != 0 && !(small(p.gate) && small(p.up))) continue;
+                for (const bool gelu : {false, true}) {
+                    if (gelu && p.gate != p.up && p.gate != QType::GGML_IQ3_XXS) continue;
+                    const std::uint32_t seed = 101U + static_cast<std::uint32_t>(k);
+                    const Result wide        = check(p, rows, k, 8, gelu, seed);
+                    failures += wide.failures;
+                    paired += wide.paired ? 1 : 0;
+                    pair_paired += wide.paired ? 1 : 0;
+                    // The matrix kernel's band (whole 128-row tiles): against the FP64 reference
+                    // only, the tuner picks its route per width.
+                    // The legacy pass reruns the narrow widths alone: the analyzer answers no
+                    // other.
+                    for (const std::int32_t t : {9, 12, 16}) {
+                        if (legacy || rows % 128 != 0) continue;
+                        const Result matrix = check(p, rows, k, t, gelu, seed);
+                        failures += matrix.failures;
+                        matrix_paired += matrix.paired ? 1 : 0;
+                    }
+                    // A prefill of two of the matrix kernel's slices (one shape: the FP64
+                    // reference grows with T).
+                    if (!legacy && rows == 640 && k == 5120) {
+                        const Result prefill = check(p, 256, 1024, 520, gelu, seed);
+                        failures += prefill.failures;
+                    }
+                    for (const std::int32_t t : {1, 2, 3, 4, 5, 6, 7}) {
+                        analyzer_answers =
+                            analyzer_answers ||
+                            !ops::route_analyzer::device_routes({p.gate, ops::LinearPolicy::AllowA8,
+                                                                 rows, k, generic::Epilogue::Store},
+                                                                t)
+                                 .empty();
+                        const Result narrow = check(p, rows, k, t, gelu, seed);
+                        failures += narrow.failures;
+                        paired += narrow.paired ? 1 : 0;
+                        pair_paired += narrow.paired ? 1 : 0;
+                        if (!(narrow.paired && wide.paired)) continue;
+                        // The activation of token j is the same at both widths (seeded by column).
+                        const auto a8 =
+                            make_linear_activation(k, 8, seed + 7U, ActivationCompute::A8);
+                        const auto at =
+                            make_linear_activation(k, t, seed + 7U, ActivationCompute::A8);
+                        if (!std::equal(at.begin(), at.end(), a8.begin())) continue;
+                        ++invariant;
+                        if (std::memcmp(narrow.bits.data(), wide.bits.data(),
+                                        narrow.bits.size() * 2) != 0) {
+                            std::cerr << "FAIL " << name(p.gate) << "/" << name(p.up) << " ["
+                                      << rows << "," << k << "]: T=" << t
+                                      << " tokens differ from the same tokens at T=8\n";
+                            ++failures;
+                        }
                     }
                 }
             }
-        }
-        // The tuner may route a width elsewhere, never every width of every shape.
-        if (pair_paired == 0) {
-            std::cerr << "FAIL " << name(p.gate) << "/" << name(p.up)
-                      << ": never took the vector pair\n";
-            ++failures;
+            // The tuner may route a width elsewhere, never every width of every shape.
+            if (pair_paired == 0 && !(analyzer_answers && !legacy)) {
+                std::cerr << "FAIL " << name(p.gate) << "/" << name(p.up)
+                          << ": never took the vector pair"
+                          << (legacy ? " (legacy route policy)" : "") << "\n";
+                ++failures;
+            }
         }
     }
     std::cout << "segmented swiglu: " << paired << " paired calls, " << matrix_paired

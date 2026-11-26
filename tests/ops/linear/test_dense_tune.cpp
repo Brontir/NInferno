@@ -15,6 +15,7 @@
 #include "ninferno/ops/route_table.h"
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
@@ -25,6 +26,7 @@
 #include <cuda_runtime.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -156,7 +158,23 @@ int check_case(const Case& c, cudaStream_t stream) {
                                    .value_or(generic::heuristic_route(problem, d.weight, t, false));
         const auto chosen    = generic::select_route(problem, d.weight, t, false);
         if (!tuned[t]) {
-            if (!(chosen == heuristic)) {
+            // A width the engine's analyzer answers (route_analyzer.h device_routes: T 1-8 off
+            // the held chips, ahead of the tuner's entry and the heuristic, #1227) takes its first
+            // admitted route; any other width keeps the heuristic.
+            const auto listed = ops::route_analyzer::device_routes(problem, t);
+            if (!listed.empty()) {
+                // analyzer_entry's answer: the first listed route the weight and policy admit.
+                const auto first =
+                    std::find_if(listed.begin(), listed.end(), [&](generic::Route r) {
+                        return generic::route_admits(r, d.weight, c.policy);
+                    });
+                if (first == listed.end() || !(chosen == *first)) {
+                    std::cerr << c.name << " T=" << t << ": untuned width "
+                              << generic::route_name(chosen)
+                              << " is not the analyzer's first admitted route\n";
+                    ++failures;
+                }
+            } else if (!(chosen == heuristic)) {
                 std::cerr << c.name << " T=" << t << ": untuned width left the heuristic\n";
                 ++failures;
             }
@@ -519,6 +537,18 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
 
     // Evidence demotes them.
     ops::set_route_policy(RoutePolicy::Evidence);
+    // A width the engine's analyzer answers under evidence (route_analyzer.h device_routes: T 1-8
+    // off the held chips, ahead of a table and of the tuner, #1227) is the analyzer's: no table
+    // answer is demoted there and the tuner leaves it. The lent widths checked from here are the
+    // others (T 9-16 on those boards, every lent width on the held chips).
+    std::erase_if(held_widths, [&](std::int32_t t) {
+        if (ops::route_analyzer::device_routes(pdec, t).empty()) return false;
+        if (!answered(pdec, t, false)) {
+            fail("evidence: the analyzer's width T=" + std::to_string(t) + " left to the tuner");
+        }
+        return true;
+    });
+    if (held_widths.empty()) fail("evidence: the analyzer answers every lent width");
     for (const std::int32_t t : held_widths) {
         if (answered(pdec, t, false)) fail("evidence keeps lent width T=" + std::to_string(t));
     }
