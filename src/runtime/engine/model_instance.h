@@ -174,5 +174,7 @@ struct ConstructedModel {
 [[nodiscard]] FamilyLoad load_dense(const EngineOptions& options, DeviceContext& device);
 // NemotronH hybrids: Mamba2, attention and relu^2 MoE blocks (nemotron_h_family.cpp).
 [[nodiscard]] FamilyLoad load_nemotron_h(const EngineOptions& options, DeviceContext& device);
+// Inkling 2: the looped hybrid of full and sliding attention visits (inkling2_family.cpp).
+[[nodiscard]] FamilyLoad load_inkling2(const EngineOptions& options, DeviceContext& device);
 
 } // namespace ninferno::runtime

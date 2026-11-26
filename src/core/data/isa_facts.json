@@ -3214,7 +3214,75 @@
             "value": 328.0,
             "unit": "ctas"
           }
-        }
+        },
+        "checks": [
+          {
+            "provenance": "Measured",
+            "source": "cluster_probe_120a_rtx5070ti.txt",
+            "card": "NVIDIA GeForce RTX 5070 Ti",
+            "cc": 120,
+            "sms": 70,
+            "tool": {
+              "probe": "cluster_probe 1",
+              "nvcc": "13.4.92",
+              "driver": "13040",
+              "runtime": "13040",
+              "arch": "sm_120a",
+              "source_sha256": "01636d5a84ddb6070c67b42dbbb32f080ad5becdf31b202e429d1964c7ed473f"
+            },
+            "notes": [
+              "device 0 is the GPU at PCI 0000:01:00.0",
+              "timer: %globaltimer; a sync or rank fact is the median over 7 launches of the median over 16 clusters of 256-thread CTAs (2000 syncs, 500 reduce rounds a launch)",
+              "cluster_slots: a 256-thread CTA of 24576 B dynamic shared memory, 4 an SM on a plain launch (280)",
+              "cluster_sync_ns_c2: the SM clock over the syncs 2842 MHz (clock64 / %globaltimer, rank 0), after a 200 ms hold",
+              "cluster_rank_ns_c2_s1: a round 400.6 ns (two syncs 260.8 ns, 1 ranks read)",
+              "cluster_rank_ns_c2_s2: a round 434.1 ns (two syncs 260.8 ns, 1 ranks read)",
+              "cluster_slots_c2: 280 CTAs take 2.12 rounds of the spin as C-CTA clusters, 1.14 as a plain launch",
+              "cluster_sync_ns_c8: the SM clock over the syncs 2841 MHz (clock64 / %globaltimer, rank 0), after a 200 ms hold",
+              "cluster_rank_ns_c8_s1: a round 1185.3 ns (two syncs 281.1 ns, 7 ranks read)",
+              "cluster_rank_ns_c8_s2: a round 1702.2 ns (two syncs 281.1 ns, 7 ranks read)",
+              "cluster_slots_c8: 272 CTAs take 2.17 rounds of the spin as C-CTA clusters, 1.14 as a plain launch",
+              "compute processes on the probe's GPU before the run: 0",
+              "compute processes on the probe's GPU after the run: 0",
+              "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
+              "nvidia-smi over the run (3 samples): memory clock 405..405 MHz, SM clock 180..180 MHz, P-state P8"
+            ],
+            "facts": {
+              "cluster_sync_ns_c2": {
+                "value": 130.416,
+                "unit": "ns"
+              },
+              "cluster_rank_ns_c2_s1": {
+                "value": 139.808,
+                "unit": "ns"
+              },
+              "cluster_rank_ns_c2_s2": {
+                "value": 173.28,
+                "unit": "ns"
+              },
+              "cluster_slots_c2": {
+                "value": 140.0,
+                "unit": "ctas"
+              },
+              "cluster_sync_ns_c8": {
+                "value": 140.528,
+                "unit": "ns"
+              },
+              "cluster_rank_ns_c8_s1": {
+                "value": 129.175,
+                "unit": "ns"
+              },
+              "cluster_rank_ns_c8_s2": {
+                "value": 203.022,
+                "unit": "ns"
+              },
+              "cluster_slots_c8": {
+                "value": 136.0,
+                "unit": "ctas"
+              }
+            }
+          }
+        ]
       }
     }
   }

@@ -239,6 +239,7 @@ constexpr FamilyStorageRow kFamilyStorage[] = {
     {"dense_decoder", {KvCacheStorage::Fp8E4M3Row256, RecurrentStateStorage::FP32}},
     {"moe_decoder", {KvCacheStorage::Fp8E4M3Row256, RecurrentStateStorage::FP32}},
     {"nemotron_h", {KvCacheStorage::BFloat16, RecurrentStateStorage::FP32}},
+    {"inkling2_text", {KvCacheStorage::BFloat16, RecurrentStateStorage::FP32}},
 };
 
 } // namespace

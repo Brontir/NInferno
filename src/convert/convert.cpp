@@ -16,6 +16,7 @@
 #include "convert/fetch.h"
 #include "convert/formats.h"
 #include "convert/gemma4.h"
+#include "convert/inkling2.h"
 #include "convert/ggml_quants.h"
 #include "convert/qwen3_5.h"
 #include "convert/numerics.h"
@@ -1641,6 +1642,12 @@ ConvertResult convert(const ConvertOptions& options) {
     if (is_qwen3_5_architecture(declared_architecture(base.config()))) {
         model       = build_qwen3_5_model(base, components, companions, options.resources);
         bf16_recipe = model.config().contains("num_experts") ? "" : "qwen3_5_bf16";
+    } else if (is_inkling2_architecture(declared_architecture(base.config()))) {
+        if (components != std::vector<std::string>{"text"}) {
+            throw std::runtime_error("--components " + options.components +
+                                     ": an Inkling 2 model converts its text component only");
+        }
+        model = build_inkling2_model(base, options.resources);
     } else if (is_dense_architecture(declared_architecture(base.config()))) {
         // A NemotronH MTP drafter read from its target's GGUF is that drafter's text component.
         const bool drafter_of_target =
@@ -1700,6 +1707,8 @@ ConvertResult convert(const ConvertOptions& options) {
     try {
         if (is_qwen3_5_recipe(options.recipe)) {
             apply_qwen3_5_recipe(options.recipe, model, recipe, sources);
+        } else if (is_inkling2_recipe(options.recipe)) {
+            apply_inkling2_recipe(options.recipe, model, recipe, sources.get("base"));
         } else if (is_dense_recipe(options.recipe)) {
             vocabulary = apply_dense_recipe(options.recipe, model, recipe, sources.get("base"),
                                             options.vocab);
@@ -2223,7 +2232,9 @@ const std::string& supported_architectures_text() {
             "Gemma4AssistantForCausalLM, Gemma4UnifiedAssistantForCausalLM, DFlashDraftModel "
             "(Gemma 4 drafters), MuseGlimmerAssistantModel (Muse Glimmer's DFlash drafter), "
             "Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration, Qwen3_5MoeForCausalLM, "
-            "Qwen3_5MoeForConditionalGeneration; dense, MoE and hybrid decoders:";
+            "Qwen3_5MoeForConditionalGeneration, Inkling2LoopForCausalLM (Inkling 2, GGUF); dense, "
+            "MoE and "
+            "hybrid decoders:";
         const char* separator = " ";
         for (const std::string_view name : dense_architectures()) {
             out.append(separator).append(name);
@@ -2481,6 +2492,10 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
     }
     if (is_dense_architecture(architecture)) {
         out.recipe = default_dense_recipe(config, quantized);
+        return out;
+    }
+    if (is_inkling2_architecture(architecture)) {
+        out.recipe = default_inkling2_recipe(config);
         return out;
     }
     try {
