@@ -798,7 +798,8 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
     refuses(basis_of(bare, options, device), "artifact", "facts without the directory");
 }
 
-// Inkling 2's declines: the start refuses speculation; the rest as the decoders'.
+// Inkling 2's declines: the options its start refuses (int8 activations, a narrow state, Vision,
+// speculation, a board without BF16 MMA), a pin, the tokenizer, the directory.
 void inkling2_declines(const rt::PlanModelFacts& facts, const DeviceClass& device) {
     const std::string name      = "Inkling-2-Mini";
     const EngineOptions options = options_of(32768, 2048, 1);
@@ -817,9 +818,26 @@ void inkling2_declines(const rt::PlanModelFacts& facts, const DeviceClass& devic
     rt::PlanModelFacts unread = facts;
     unread.tokenizer_tokens   = 0;
     refuses(basis_of(unread, options, device), "tokenizer", "without the tokenizer's ids, it");
+    // The start's bound is the vocabulary (unpadded_vocab_size, 200058), below the head's 201024
+    // padded rows: one id past it is refused.
     rt::PlanModelFacts wide = facts;
-    wide.tokenizer_tokens   = static_cast<std::uint32_t>(facts.vocab) + 1;
-    refuses(basis_of(wide, options, device), "head has rows", "a tokenizer wider than the head");
+    wide.tokenizer_tokens   = 200059;
+    refuses(basis_of(wide, options, device), "vocabulary", "a tokenizer wider than the vocabulary");
+    refuses(basis_of(facts, options_of(32768, 2048, 1, ActivationMode::Int8), device), "int8",
+            "--activations int8");
+    EngineOptions narrow   = options;
+    narrow.recurrent_state = RecurrentStateStorage::BF16;
+    refuses(basis_of(facts, narrow, device), "--state-dtype", "--state-dtype bf16");
+    EngineOptions vision = options;
+    vision.enable_vision = true;
+    refuses(basis_of(facts, vision, device), "Vision", "Vision");
+    {
+        // A board without BF16 MMA (a 2080 Ti class): the start requires it.
+        const DeviceClass turing = board(0x1E07, 7, 5, 68, 5);
+        const std::string answer = basis_of(facts, options, turing);
+        check(answer.rfind("formula: ", 0) == 0,
+              name + ": a board without BF16 MMA keeps the formula (" + answer + ")");
+    }
     EngineOptions pinned       = options;
     pinned.maintainer.moe_path = MoePath::Generic;
     refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");

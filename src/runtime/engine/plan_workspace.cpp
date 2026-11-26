@@ -590,10 +590,12 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
 // under the start's route profile (the invariant routes under --activations exact). Equal to the
 // start's for the same device class.
 // Declines, and the formula stands, where the facts are not an artifact's, the tokenizer was not
-// read, no sequence plan is laid out, under a --moe-path pin (its experts are routed), under
-// speculation or Vision (the start refuses both), where the tokenizer names more ids than the
-// head has rows (the start refuses), where load would refuse the weights or a binding needs the
-// payload, and where no device class is known.
+// read, no sequence plan is laid out, under an option the start refuses (refuse_qwen_only_options,
+// as load_inkling2 calls it first; speculation; Vision), under a --moe-path pin (its experts are
+// routed), where the tokenizer names more ids than the model's vocabulary (config.vocab_size, the
+// embedding rows the start's frontend checks against), where load would refuse the weights or a
+// binding needs the payload, and where no device class is known or it has no BF16 MMA (the start
+// requires it).
 PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOptions& options,
                                        const detail::SequencePlanImpl* plan) {
     if (m.model_type != "inkling2_text") { return {}; }
@@ -606,6 +608,11 @@ PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOpti
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
+    try {
+        refuse_qwen_only_options(options, "Inkling 2");
+    } catch (const std::invalid_argument& error) {
+        return {std::nullopt, std::string("the start refuses it: ") + error.what()};
+    }
     if (const char* pinned = route_override(options, true)) { return {std::nullopt, pinned}; }
     if (options.speculative.backend != SpeculativeBackend::None) {
         return {std::nullopt, "the start refuses it: Inkling 2 runs no speculative backend"};
@@ -618,13 +625,18 @@ PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOpti
     } catch (const std::exception&) {
         return {std::nullopt, "no device class to size the routes for"};
     }
+    try {
+        require_device_support(device_class(), {.mma_bf16 = true}, "Inkling 2 family runtime");
+    } catch (const std::runtime_error& error) {
+        return {std::nullopt, std::string("the start refuses it: ") + error.what()};
+    }
     std::string why;
     const auto model = described_model<models::inkling2::Model>(m.artifact_directory, 0, why);
     if (!model) { return {std::nullopt, why}; }
     const auto tokens = static_cast<std::int32_t>(m.tokenizer_tokens);
-    if (tokens > model->config().vocab_rows) {
-        return {std::nullopt,
-                "the tokenizer names more ids than the head has rows (the start refuses)"};
+    if (tokens > model->config().vocab_size) {
+        return {std::nullopt, "the tokenizer names more ids than the model's vocabulary (the start "
+                              "refuses)"};
     }
     const ops::ScopedInvariantRoutes routes(options.activations == ActivationMode::Exact);
     const detail::WorkspacePlan arenas =
