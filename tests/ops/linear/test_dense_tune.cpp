@@ -542,7 +542,11 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
     // answer is demoted there and the tuner leaves it. The lent widths checked from here are the
     // others (T 9-16 on those boards, every lent width on the held chips).
     std::erase_if(held_widths, [&](std::int32_t t) {
-        return !ops::route_analyzer::device_routes(pdec, t).empty();
+        if (ops::route_analyzer::device_routes(pdec, t).empty()) return false;
+        if (!answered(pdec, t, false)) {
+            fail("evidence: the analyzer's width T=" + std::to_string(t) + " left to the tuner");
+        }
+        return true;
     });
     if (held_widths.empty()) fail("evidence: the analyzer answers every lent width");
     for (const std::int32_t t : held_widths) {

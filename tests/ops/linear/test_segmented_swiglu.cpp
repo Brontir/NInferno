@@ -218,15 +218,17 @@ int main() {
                     pair_paired += wide.paired ? 1 : 0;
                     // The matrix kernel's band (whole 128-row tiles): against the FP64 reference
                     // only, the tuner picks its route per width.
+                    // The legacy pass reruns the narrow widths alone: the analyzer answers no
+                    // other.
                     for (const std::int32_t t : {9, 12, 16}) {
-                        if (rows % 128 != 0) continue;
+                        if (legacy || rows % 128 != 0) continue;
                         const Result matrix = check(p, rows, k, t, gelu, seed);
                         failures += matrix.failures;
                         matrix_paired += matrix.paired ? 1 : 0;
                     }
                     // A prefill of two of the matrix kernel's slices (one shape: the FP64
                     // reference grows with T).
-                    if (rows == 640 && k == 5120) {
+                    if (!legacy && rows == 640 && k == 5120) {
                         const Result prefill = check(p, 256, 1024, 520, gelu, seed);
                         failures += prefill.failures;
                     }
