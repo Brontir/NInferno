@@ -50,13 +50,13 @@ namespace {
 
 namespace cg = cooperative_groups;
 
-constexpr int kThreads    = 256;  // the w1x8 schedule's CTA: eight warps
-constexpr int kClusters   = 16;   // clusters of one timed launch
-constexpr int kSyncs      = 2000; // syncs a timed sync launch
-constexpr int kRounds     = 500;  // reduce rounds a timed reduce launch
-constexpr int kRepeats    = 7;
-constexpr int kPlainPerSm = 4;    // the slots CTA: a plain launch holds four an SM
-constexpr long long kSpinNs = 20000;
+constexpr int kThreads       = 256;  // the w1x8 schedule's CTA: eight warps
+constexpr int kClusters      = 16;   // clusters of one timed launch
+constexpr int kSyncs         = 2000; // syncs a timed sync launch
+constexpr int kRounds        = 500;  // reduce rounds a timed reduce launch
+constexpr int kRepeats       = 7;
+constexpr int kPlainPerSm    = 4; // the slots CTA: a plain launch holds four an SM
+constexpr long long kSpinNs  = 20000;
 constexpr double kRoundShare = 0.15;
 constexpr int kSizes[]       = {2, 8}; // the product's cluster sizes (generic_gemm_launch.cuh)
 
@@ -86,26 +86,26 @@ __global__ void reduce(int n, unsigned long long* out, float* sink) {
     cg::cluster_group cl = cg::this_cluster();
     const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
     float acc[S][4];
-#pragma unroll
+#    pragma unroll
     for (int s = 0; s < S; ++s)
-#pragma unroll
+#    pragma unroll
         for (int e = 0; e < 4; ++e) acc[s][e] = 1.0f + s + e + cl.block_rank();
     if (warp == 0)
-#pragma unroll
+#    pragma unroll
         for (int s = 0; s < S; ++s)
-#pragma unroll
+#    pragma unroll
             for (int e = 0; e < 4; ++e) part[s][e][lane] = acc[s][e];
     cl.sync();
     const unsigned long long t0 = gtime();
     for (int it = 0; it < n; ++it) {
         cl.sync();
         if (cl.block_rank() == 0 && warp == 0) {
-#pragma unroll 1
+#    pragma unroll 1
             for (unsigned r = 1; r < cl.num_blocks(); ++r) {
                 const auto& other = *cl.map_shared_rank(&part, r);
-#pragma unroll
+#    pragma unroll
                 for (int s = 0; s < S; ++s)
-#pragma unroll
+#    pragma unroll
                     for (int e = 0; e < 4; ++e) acc[s][e] += other[s][e][lane];
             }
         }
@@ -114,9 +114,9 @@ __global__ void reduce(int n, unsigned long long* out, float* sink) {
     const unsigned long long t1 = gtime();
     if (threadIdx.x == 0 && cl.block_rank() == 0) out[blockIdx.x / cl.num_blocks()] = t1 - t0;
     float x = 0.f;
-#pragma unroll
+#    pragma unroll
     for (int s = 0; s < S; ++s)
-#pragma unroll
+#    pragma unroll
         for (int e = 0; e < 4; ++e) x += acc[s][e];
     if (x == 1234.5f) sink[0] = x;
 #endif
@@ -132,9 +132,7 @@ __global__ void spin(long long ns, float* sink) {
     extern __shared__ float s[];
     const unsigned long long t0 = gtime();
     unsigned long long t;
-    do {
-        t = gtime();
-    } while (static_cast<long long>(t - t0) < ns);
+    do { t = gtime(); } while (static_cast<long long>(t - t0) < ns);
     s[threadIdx.x] = static_cast<float>(t & 7);
     if (sink && s[threadIdx.x] == 9.f) sink[0] = 1.f;
 }
@@ -151,10 +149,10 @@ void check(bool ok, const std::string& what) {
 }
 
 cudaLaunchConfig_t config(int C, int ctas, int threads, size_t smem, cudaLaunchAttribute* a) {
-    a[0].id               = cudaLaunchAttributeClusterDimension;
-    a[0].val.clusterDim.x = C;
-    a[0].val.clusterDim.y = 1;
-    a[0].val.clusterDim.z = 1;
+    a[0].id                = cudaLaunchAttributeClusterDimension;
+    a[0].val.clusterDim.x  = C;
+    a[0].val.clusterDim.y  = 1;
+    a[0].val.clusterDim.z  = 1;
     cudaLaunchConfig_t cfg = {};
     cfg.gridDim            = dim3(ctas);
     cfg.blockDim           = dim3(threads);
@@ -199,8 +197,9 @@ double rank_ns(int C, double sync_ns, unsigned long long* d, float* sink) {
         meds.push_back(median(v));
     }
     const double round = median(meds) / kRounds;
-    std::printf("note cluster_rank_ns_c%d_s%d: a round %.1f ns (two syncs %.1f ns, %d ranks read)\n",
-                C, S, round, 2 * sync_ns, C - 1);
+    std::printf(
+        "note cluster_rank_ns_c%d_s%d: a round %.1f ns (two syncs %.1f ns, %d ranks read)\n", C, S,
+        round, 2 * sync_ns, C - 1);
     return (round - 2.0 * sync_ns) / (C - 1);
 }
 
@@ -260,10 +259,12 @@ int main() {
         CHECK(cudaFuncSetAttribute(syncs, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
         CHECK(cudaFuncSetAttribute(reduce<1>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
         CHECK(cudaFuncSetAttribute(reduce<2>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
-        CHECK(cudaFuncSetAttribute(slots_kernel, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+        CHECK(
+            cudaFuncSetAttribute(slots_kernel, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
         CHECK(cudaFuncSetAttribute(spin, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
         const int smem = static_cast<int>(p.sharedMemPerMultiprocessor) / kPlainPerSm - 1024;
-        CHECK(cudaFuncSetAttribute(slots_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
+        CHECK(
+            cudaFuncSetAttribute(slots_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
         CHECK(cudaFuncSetAttribute(spin, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
         int plain = 0;
         CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&plain, slots_kernel, kThreads, smem));
