@@ -89,7 +89,7 @@ q6k p1 swiglu 128x2048 speed T=2 ggml_vec ws=4608
 q6k p1 swiglu 128x2048 speed T=3 ggml_vec ws=6912
 q6k p1 swiglu 128x2048 speed T=4 ggml_vec ws=9216
 q6k p1 swiglu 128x2048 speed T=5 ggml_vec ws=11520
-q6k p1 swiglu 128x2048 speed T=8 ggml_vec ws=18432
+q6k p1 swiglu 128x2048 speed T=8 rmma.m1.n1.w1x8.c2 ws=0
 q6k p1 swiglu 128x2048 speed T=9..16 rmma.m1.n1.w1x8.c8 ws=0
 q6k p1 swiglu 128x2048 speed T=17..64 rmma.m1.n1.w1x8 ws=0
 q6k p1 swiglu 128x2048 speed T=96..128 rmma.m1.n1.w1x4 ws=0
@@ -313,7 +313,7 @@ q6k p1 swiglu 1024x1024 speed T=2 ggml_vec ws=2304
 q6k p1 swiglu 1024x1024 speed T=3 ggml_vec ws=3456
 q6k p1 swiglu 1024x1024 speed T=4 ggml_vec ws=4608
 q6k p1 swiglu 1024x1024 speed T=5 ggml_vec ws=5760
-q6k p1 swiglu 1024x1024 speed T=8 ggml_vec ws=9216
+q6k p1 swiglu 1024x1024 speed T=8 rmma.m1.n1.w1x8.c2 ws=0
 q6k p1 swiglu 1024x1024 speed T=9..16 rmma.m1.n1.w1x8 ws=0
 q6k p1 swiglu 1024x1024 speed T=17..32 rmma.m1.n2.w1x4 ws=0
 q6k p1 swiglu 1024x1024 speed T=48 w4a8.64x64 ws=61440
@@ -708,7 +708,9 @@ q6k p1 add 5120x17408 prefill T=2048 w4a8ws.128x64.p4 ws=44564480
 q6k p1 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q6k p1 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6k p1 swiglu 2560x17408 speed T=1 r8.w8r1 ws=0
-q6k p1 swiglu 2560x17408 speed T=2..8 rmma.m1.n1.w1x16 ws=0
+q6k p1 swiglu 2560x17408 speed T=2 rmma.m1.n1.w1x16 ws=0
+q6k p1 swiglu 2560x17408 speed T=3 r8.w4r1 ws=65408
+q6k p1 swiglu 2560x17408 speed T=4..8 rmma.m1.n1.w1x16 ws=0
 q6k p1 swiglu 2560x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q6k p1 swiglu 2560x17408 speed T=17..2048 ggml_mmq ws=0
 q6k p1 swiglu 2560x17408 prefill T=17 w4a8.32x128 ws=370048
@@ -795,7 +797,9 @@ q6k p1 add 28672x8192 prefill T=2048 w4a8ws.128x64.p4 ws=20971520
 q6k p1 add 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q6k p1 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6k p1 swiglu 14336x8192 speed T=1 r8.w8r1 ws=0
-q6k p1 swiglu 14336x8192 speed T=2..8 rmma.m1.n1.w1x16 ws=0
+q6k p1 swiglu 14336x8192 speed T=2..4 rmma.m1.n1.w1x16 ws=0
+q6k p1 swiglu 14336x8192 speed T=5 r8.w8r2 ws=51200
+q6k p1 swiglu 14336x8192 speed T=8 rmma.m1.n1.w1x16 ws=0
 q6k p1 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q6k p1 swiglu 14336x8192 speed T=17..2048 ggml_mmq ws=0
 q6k p1 swiglu 14336x8192 prefill T=17 w4a8.32x128 ws=174080
