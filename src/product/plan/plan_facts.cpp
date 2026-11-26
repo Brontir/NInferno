@@ -135,6 +135,9 @@ struct Geometry {
     // ple_known: the source says whether it has one).
     double query_heads = 0, ple_width = 0;
     bool ple_known = false;
+    // Inkling 2: its convolution history's channels a visit slot (keys, values, the attention and
+    // the expert outputs). Its full_layers / sliding_layers count visit slots, not layers.
+    std::int32_t conv_channels = 0;
 };
 
 // One attention layer: its projections (queries and output at heads x key and heads x value; keys
@@ -181,6 +184,8 @@ std::string state_of(const Geometry& g, models::StateShape& s) {
         s.family = models::StateFamily::Gemma4;
     } else if (type == "nemotron_h") {
         s.family = models::StateFamily::NemotronH;
+    } else if (type == "inkling2_text") {
+        s.family = models::StateFamily::Inkling2;
     } else {
         return "no family serves the model";
     }
@@ -219,6 +224,15 @@ std::string state_of(const Geometry& g, models::StateShape& s) {
     case models::StateFamily::NemotronH:
         if (s.sliding_layers != 0) { return "sliding layers in a family without rings"; }
         break;
+    case models::StateFamily::Inkling2:
+        // A slot a visit: the full visits' pool, the sliding visits' rings, every visit's
+        // convolution history (sequence_bytes.cpp inkling2_layout).
+        if (s.sliding_layers == 0 || g.conv_channels <= 0) {
+            return "an Inkling 2 model without sliding visits or convolution channels";
+        }
+        s.recurrent_layers = s.full_layers + s.sliding_layers;
+        s.conv_channels    = g.conv_channels;
+        return {};
     }
     if (s.family == models::StateFamily::Qwen35 || s.family == models::StateFamily::NemotronH) {
         const auto heads = static_cast<std::uint64_t>(g.ssm_heads);
@@ -288,6 +302,11 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
         const auto channels        = inner + 2 * static_cast<std::uint64_t>(g.ssm_groups) * state;
         m.recurrent_state_elements = std::uint64_t{g.recurrent_layers} * inner * state;
         m.recurrent_conv_bytes     = std::uint64_t{g.recurrent_layers} * conv_rows * channels * 2;
+    }
+    // Inkling 2: every visit slot's FP32 history of three inputs (sequence_bytes.cpp).
+    if (g.conv_channels > 0) {
+        m.recurrent_conv_bytes = std::uint64_t{m.state.recurrent_layers} * 3 *
+                                 static_cast<std::uint64_t>(g.conv_channels) * 4;
     }
     const bool moe           = g.experts > 1 && g.experts_used > 0 && g.expert_ffn > 0;
     const double dense_width = !moe || g.dense_beside_experts ? g.ffn : 0;
@@ -387,6 +406,28 @@ std::vector<bool> gguf_sliding(const json& metadata, const std::string& arch, st
     return out;
 }
 
+// Inkling 2's state is a slot a visit of its looped schedule (models/inkling2/config.cpp
+// visit_schedule): layers [0, core_start) once, the core `passes` times, the rest once. The state
+// counts those visits by kind (8 full and 40 sliding for Inkling-2-Mini's 24 layers); the
+// parameter counts keep the physical layers. `full[i]`: layer i attends over the whole context.
+void inkling2_visits(const std::vector<bool>& full, std::uint32_t start, std::uint32_t end,
+                     std::uint32_t passes, double heads, double kv, double dim, Geometry& g) {
+    std::uint32_t full_visits = 0, sliding_visits = 0;
+    for (std::size_t i = 0; i < full.size(); ++i) {
+        const std::uint32_t times = i >= start && i < end ? std::max<std::uint32_t>(1, passes) : 1;
+        (full[i] ? full_visits : sliding_visits) += times;
+    }
+    g.full_layers             = full_visits;
+    g.sliding_layers          = sliding_visits;
+    g.full_kv_total           = u32(kv * full_visits);
+    g.sliding_kv_total        = u32(kv * sliding_visits);
+    g.full_attending          = full_visits;
+    g.sliding_attending       = sliding_visits;
+    g.full_attention_width    = heads * 2 * dim * full_visits;
+    g.sliding_attention_width = heads * 2 * dim * sliding_visits;
+    g.conv_channels           = static_cast<std::int32_t>(2 * kv * dim + 2 * g.hidden);
+}
+
 // `has_tensor` (the file's tensor table, when read): a layer without its own value projection keeps
 // its keys as its values (Gemma 4's full layers, attention_k_eq_v: gguf_model.cpp).
 Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::string&)>& has_tensor = nullptr) {
@@ -479,6 +520,13 @@ Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::st
     g.shared_ffn   = number(md, p + "expert_shared_feed_forward_length") *
                    std::max(1.0, number(md, p + "expert_shared_count", 1));
     g.dense_beside_experts = arch == "gemma4";
+    if (g.model_type == "inkling2_text") {
+        std::vector<bool> full(layers);
+        for (std::size_t i = 0; i < layers; ++i) { full[i] = !sliding[i]; }
+        inkling2_visits(full, u32(number(md, p + "loop.start")), u32(number(md, p + "loop.end")),
+                        u32(number(md, p + "loop.count", 1)), first_heads, layers ? kv[0] : 0, key,
+                        g);
+    }
     return g;
 }
 
@@ -1027,12 +1075,24 @@ Geometry geometry_of_config(const json& config) {
     }
     g.ffn_matrices = starts_with(type, "nemotron_h") || g.model_type == "nemotron_h" ? 2 : 3;
     g.dense_beside_experts = g.model_type == "gemma4_text";
+    if (g.model_type == "inkling2_text") {
+        std::vector<bool> full(kinds.size());
+        for (std::size_t i = 0; i < kinds.size(); ++i) { full[i] = kinds[i] == "full_attention"; }
+        std::uint32_t start = 0, end = 0, passes = 1;
+        if (const auto loop = c.find("loop_config"); loop != c.end() && loop->is_object()) {
+            start  = u32(number(*loop, "core_start"));
+            end    = u32(number(*loop, "core_end"));
+            passes = u32(number(*loop, "num_passes", 1));
+        }
+        inkling2_visits(full, start, end, passes, heads, kv_heads, head_dim, g);
+    }
     return g;
 }
 
 bool is_family(std::string_view type) {
     return type == "qwen3_5_text" || type == "qwen3_5_moe_text" || type == "gemma4_text" ||
-           type == "dense_decoder" || type == "moe_decoder" || type == "nemotron_h";
+           type == "dense_decoder" || type == "moe_decoder" || type == "nemotron_h" ||
+           type == "inkling2_text";
 }
 
 std::string normalized_board(std::string_view name) {
@@ -1052,6 +1112,7 @@ std::string plan_model_type_of_gguf(const json& metadata) {
     if (arch == "gemma4") { return "gemma4_text"; }
     if (arch == "gpt-oss" || arch == "qwen3moe") { return "moe_decoder"; }
     if (arch == "nemotron_h_moe") { return "nemotron_h"; }
+    if (arch == "inkling2" || arch == "inkling2_loop") { return "inkling2_text"; }
     if (std::find(std::begin(kDenseGgufArchs), std::end(kDenseGgufArchs), arch) !=
         std::end(kDenseGgufArchs)) {
         return number(metadata, arch + ".expert_count") > 1 ? "moe_decoder" : "dense_decoder";
@@ -1542,10 +1603,11 @@ namespace {
 PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::string& where);
 
 // The families whose workspace query binds the model over the artifact's directory (#615): Qwen
-// 3.5 (W2), the dense decoder and NemotronH (W3).
+// 3.5 (W2), the dense decoder and NemotronH (W3), Inkling 2.
 bool binds_directory(const runtime::PlanModelFacts& model) {
     const std::string& type = model.model_type;
-    return type == "qwen3_5_text" || type == "qwen3_5_moe_text" || runtime::hf_decoder_family(type);
+    return type == "qwen3_5_text" || type == "qwen3_5_moe_text" ||
+           runtime::hf_decoder_family(type) || type == "inkling2_text";
 }
 
 // What the workspace query reads of an artifact beside its facts (#615): its directory and its

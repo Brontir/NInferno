@@ -2393,6 +2393,10 @@ Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv) {
         out.kv = {KvCacheStorage::BFloat16, KvCacheStorage::Int8Group64, KvCacheStorage::Fp8E4M3Row256,
                   KvCacheStorage::Fp8KeyNvfp4Value, KvCacheStorage::Nvfp4Group16};
         out.activations = {ActivationMode::Fast, ActivationMode::Exact, ActivationMode::Int8};
+    } else if (model.family == "inkling2_text") {
+        // Inkling 2's attention reads BF16 planes only (sequence_bytes.cpp validate_state_storage).
+        out.kv          = {KvCacheStorage::BFloat16};
+        out.activations = {ActivationMode::Fast, ActivationMode::Exact};
     } else {
         out.kv          = {KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256};
         out.activations = {ActivationMode::Fast, ActivationMode::Exact};

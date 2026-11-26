@@ -45,6 +45,7 @@ add_library(ninferno_engine STATIC
   engine/dense_family.cpp
   engine/decision_sources.cpp
   engine/nemotron_h_family.cpp
+  engine/inkling2_family.cpp
   engine/gemma4_family.cpp
   engine/plan_workspace.cpp
   engine/plan_moe_routes.cpp

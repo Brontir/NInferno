@@ -2,6 +2,7 @@ target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/weight_input.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/dense_fused/dense_fused.cu"
   "${CMAKE_CURRENT_LIST_DIR}/gemma4_fused/gemma4_fused.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/inkling2/inkling2.cu"
   "${CMAKE_CURRENT_LIST_DIR}/gemma4_vision/gemma4_vision.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/add_bias.cu"
   "${CMAKE_CURRENT_LIST_DIR}/launcher/argmax.cu"

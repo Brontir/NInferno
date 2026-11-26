@@ -23,6 +23,7 @@ constexpr std::array kFamilies{
     FamilyEntry{"dense_decoder", &load_dense},
     FamilyEntry{"moe_decoder", &load_dense},
     FamilyEntry{"nemotron_h", &load_nemotron_h}, // one row a family
+    FamilyEntry{"inkling2_text", &load_inkling2},
 };
 
 } // namespace

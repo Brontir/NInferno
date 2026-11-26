@@ -356,7 +356,8 @@ def switch_targets(body, i):
     compile one so, e.g. the routed expert kernels' epilogue): the jump table is in a constant
     bank, so its entries are not read, and the targets are over-approximated by every instruction
     after the branch, up to the reconvergence point R of the BSSY that opens its region where one
-    stands within eight instructions before it (BSSY Bn, R), else to the function's end. All
+    stands within eight instructions before it (BSSY Bn, R), else to the function's last
+    unconditional EXIT (its end where no such EXIT follows). All
     forward: no edge back, so no loop is made, and a loop the branch sits outside of is counted as
     before. None (unknown flow, the counts left empty) where no instruction follows, or where a
     branch among the targets jumps back (a loop entered from the switch could lose its header's
@@ -368,6 +369,16 @@ def switch_targets(body, i):
             if m and int(m.group(1), 16) > offset:
                 end = int(m.group(1), 16)
             break
+    if end is None:
+        # No BSSY: the targets end at the function's last unconditional EXIT. What follows it is
+        # entered only by explicit edges (a callee by its CALL; on sm_70 the out-of-line BRA.DIV
+        # stubs of the emulated MMA's shuffles, which branch back into the K loop), never by a
+        # jump table's case, which lands in the body (#1226: the Situ case made the MoE
+        # activation switch a BRX on sm_70).
+        exits = [k for k in range(i + 1, len(body))
+                 if base_opcode(body[k][2]) == "EXIT" and not body[k][1]]
+        if exits:
+            end = body[exits[-1]][0]
     targets = [k for k in range(i + 1, len(body)) if end is None or body[k][0] <= end]
     for k in targets:
         if base_opcode(body[k][2]) in ("BRA", "JMP"):
