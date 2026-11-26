@@ -58,7 +58,7 @@ constexpr int kRepeats       = 7;
 constexpr int kPlainPerSm    = 4; // the slots CTA: a plain launch holds four an SM
 constexpr long long kSpinNs  = 20000;
 constexpr double kRoundShare = 0.15;
-constexpr int kSizes[]       = {2, 8}; // the product's cluster sizes (generic_gemm_launch.cuh)
+constexpr int kSizes[]       = {2, 8};      // the product's cluster sizes (generic_gemm_launch.cuh)
 constexpr long long kWarmNs  = 200'000'000; // the hold before each cluster size's timings
 
 __device__ __forceinline__ unsigned long long gtime() {
