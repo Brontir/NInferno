@@ -8,7 +8,7 @@
  "source": "tools/route_pick/gen.py: pick.py (bands, T 9-32) over the facts below, nothing measured on this card",
  "inputs": {
   "src/core/data/gpu_facts.json": "beb9d18a93d7ab298370bcfe5998ad7f18afe2cf24b19efeca2f7787d35d596d",
-  "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
+  "src/core/data/isa_facts.json": "a65bb33f534b146d2eea98fb6e90a66d6648f5b1da5ad76905b2300e2601d2ff",
   "src/core/data/sm_rate_facts.json": "21bea588f9c7ef2b61b07fe1cbf111eda940edc882961737df278579271c0831",
   "src/ops/generic/data/kernel_facts/sm_86.txt": "8ee6f20694aabde6d0050184cc0c7848ca49087c6ffde0e88da7afac8a8eb389",
   "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
