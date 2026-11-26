@@ -354,7 +354,7 @@ bool latency_launched(const Card& c, Epilogue ep, int A, int B, int M, double n,
 
 double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool latency_row,
                   double n, double k, double T, double pitch, int M, int N, int A, int B, int C,
-                  bool issue, double sets) {
+                  double sets) {
     const double sms = c.sms, clk = c.clk, bus = c.bus;
     const double passes   = std::ceil(T / (8.0 * N));
     const double rows_cta = 16.0 * M * A, warps = A * B;
@@ -398,7 +398,9 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
         const double cm = std::max(nc / sms, 1.0);
         const double tau =
             std::max({own, red * cps * warps * iint / kPartitions / clk + (1.0 - red) * own,
-                      issue ? cps * warps * tot / kPartitions / clk : 0.0,
+                      // the issue bound: the warps of the busiest SM's CTAs, an instruction a
+                      // clock a partition
+                      cps * warps * tot / kPartitions / clk,
                       emu > 0 ? cm * warps * (tot + emu) / kPartitions / clk : 0.0});
         const double sm = trips * tau + o + nc * bcta / bus / static_cast<double>(B);
         return std::sqrt(sm * sm + dram * dram);
@@ -989,7 +991,7 @@ std::optional<std::pair<int, int>> parse_r8(std::string_view r) {
 }
 
 std::optional<double> price(const Card& c, const Call& call, std::string_view route,
-                            const Settings& s, bool issue = false) {
+                            const Settings& s) {
     const FormatRow* fr = format_row(call.qtype);
     if (fr == nullptr) return std::nullopt;
     const double n = call.n, k = call.k, T = std::max<double>(call.tokens, 1.0);
@@ -1020,7 +1022,7 @@ std::optional<double> price(const Card& c, const Call& call, std::string_view ro
             }
         }
         return price_rmma(c, s, *r, lat_row, n, k, T, sets * k * bits / 8.0, m->M, m->N, m->A, m->B,
-                          m->C, issue, sets);
+                          m->C, sets);
     }
     if (const auto m = parse_r8(route)) {
         const auto [Wp, R] = *m;
@@ -1131,17 +1133,6 @@ std::optional<Card> card_of(const DeviceClass& device) {
 
 std::optional<double> price_ns(const Card& card, const Call& call, std::string_view route,
                                const Settings& s) {
-    // The pair (round 11): q8 n4.w1x8 = the price of n2.w1x4 x the ratio of the two with the
-    // issue bound.
-    if (route == "rmma.m1.n4.w1x8" && call.qtype == QType::Q8_G32_FP16) {
-        const auto a  = price(card, call, "rmma.m1.n2.w1x4", s, false);
-        const auto b  = price(card, call, route, s, true);
-        const auto ai = price(card, call, "rmma.m1.n2.w1x4", s, true);
-        if (a && b && ai && *ai > 0) {
-            const double t = *a * *b / *ai;
-            return std::isfinite(t) && t > 0 ? std::optional<double>(t) : std::nullopt;
-        }
-    }
     const auto t = price(card, call, route, s);
     // A price the facts cannot give (a zero count in a row) is no price, never inf or NaN.
     return t && std::isfinite(*t) && *t > 0 ? t : std::nullopt;

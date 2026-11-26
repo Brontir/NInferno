@@ -53,7 +53,6 @@ EMU_CALL = {'HMMA.16816.F32.BF16.EMU': 551.0}
 # cost a call, 4 partitions x 1627 MHz / the SM's saturated 18.86 calls a us (16 warps, 4 chains) = 345 instructions.
 EMU_LAT_NS = {1: 563.2, 2: 437.0, 3: 437.0, 4: 377.6}
 EMU_ISSUE = 4.0 * 1627.0 / 18.86
-PAIR = {'rmma.m1.n4.w1x8': ('q8', 'rmma.m1.n2.w1x4')}   # route: (format, the pair member its price is taken from)
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
 MMQ_FILL = 0.9                     # core/mmq_columns.h launch_of: a tile a CTA where the grid fills its last wave to 90 %
 # generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
@@ -210,7 +209,7 @@ def window(c, P, bw):
     return c['l0'] + max(bw - 512.0, 0.0) / c['fill'] / c['clk']
 
 
-def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
+def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     """ns of one register-MMA launch: rounds of the CTAs the SMs hold (registers), a round = hypot(SM side, DRAM side).
     SM side: K trips x tau + the code outside the loop, plus the wave term (every warp's K step waits one K step's bytes
     of every row of the round at the bus rate, / warps_k); tau = the warp's chain (its DRAM round trips, each a window of
@@ -255,7 +254,7 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
         cm = max(nc / sms, 1.0)                            # the CTAs the launch puts on an SM in this round
         tau = max(own,
                   red * cps * warps * _num(r['int']) / PARTITIONS / clk + (1.0 - red) * own,
-                  cps * warps * tot / PARTITIONS / clk if issue else 0.0,     # the issue bound: pair ratios only
+                  cps * warps * tot / PARTITIONS / clk,                       # the issue bound: the warps of the busiest SM's CTAs, an instruction a clock a partition
                   cm * warps * (tot + emu) / PARTITIONS / clk if emu else 0.0)  # the issue bound with emulated calls
         sm = trips * tau + o + nc * bcta / bus / float(B)  # the wave term (round 18, AUDIT r18: 1 + 1 / warps_k)
         return math.sqrt(sm * sm + dram * dram)
@@ -713,15 +712,10 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
 def price_ns(gpu, F, shape, route, P=P):
     """ns of one call of `shape` by `route` on the card of `gpu` (a gpu_facts.json row), or None: no facts for the card,
     the format or the route's kernel, or a route the launch would not take as named."""
-    fmt, anchor = PAIR.get(route, (None, None))
-    if fmt == str(shape['format']).lower():                # the pair's ratio by the issue bound, on the anchor's price
-        t = [_price(gpu, F, shape, r, P, i) for r, i in ((anchor, False), (route, True), (anchor, True))]
-        if None not in t:
-            return t[0] * t[1] / t[2]
     return _price(gpu, F, shape, route, P)
 
 
-def _price(gpu, F, shape, route, P, issue=False):
+def _price(gpu, F, shape, route, P):
     c, fmt, ep = card_of(gpu, F), str(shape['format']).lower(), str(shape.get('epilogue', 'store')).lower()
     if c is None or fmt not in BITS:
         return None
@@ -742,7 +736,7 @@ def _price(gpu, F, shape, route, P, issue=False):
         r = kf_row(kf, 'rmma', latency=0, **key)
         if r is not None and N == 1 and latency_launched(c, ep, A, B, M, n, r, kf_row(kf, 'rmma', latency=1, **key), C):
             r = kf_row(kf, 'rmma', latency=1, **key)                       # the latency instance is the one launched
-        return None if r is None else price_rmma(c, P, r, n, k, T, sets * k * bits / 8.0, M, N, A, B, C, issue, sets=sets)
+        return None if r is None else price_rmma(c, P, r, n, k, T, sets * k * bits / 8.0, M, N, A, B, C, sets=sets)
     (fam, Wp, R), m = (route, 0, 0), _R8.match(route)
     if m:
         fam, Wp, R = 'r8', int(m.group(1)), int(m.group(2))
