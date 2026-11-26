@@ -989,7 +989,8 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
     const auto run = [&](std::int32_t offset, std::int32_t t, std::vector<std::uint16_t>& bits) {
         const generic::Route route = generic::select_route(problem, device.weight, t, false);
         const auto* at = static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k;
-        if (route.family != generic::Family::RegisterMma || !volta_hmma_runs(device.weight, at, t)) {
+        if (route.family != generic::Family::RegisterMma ||
+            !volta_hmma_runs(device.weight, at, t)) {
             return false;
         }
         DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
