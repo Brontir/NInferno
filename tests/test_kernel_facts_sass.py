@@ -245,6 +245,12 @@ class LoopFinder(unittest.TestCase):
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
         self.assertIsNone(sc.switch_targets(body, i))
         self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
+        # The same case as a local loop (its own back edge, BRA 0x530 at 0x540): an edge from
+        # inside the unentered tail enters nothing, so the flow stays unknown.
+        loop = [(0x530, "FADD R36, R36, R30 ;"), (0x540, "@P2 BRA 0x530 ;"), (0x550, "BRA 0x420 ;")]
+        body = body_of(lines + loop)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertIsNone(sc.switch_targets(body, i))
         # tail_reached follows successors' edges: a callee's branch with a predicate operand, a
         # guarded RET and an unguarded BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
         # code after an unguarded KILL is entered by nothing.

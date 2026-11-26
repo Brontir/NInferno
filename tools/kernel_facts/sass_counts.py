@@ -353,33 +353,47 @@ def branch_edges(guarded, opcode, operands):
 
 def tail_reached(body, last_exit):
     """Whether every instruction after the function's last unconditional EXIT (index `last_exit`)
-    is entered by an explicit edge: the target of a BRA / JMP / CALL anywhere in the function, or
-    the fall-through of a reached instruction there. A jump-table case placed after that EXIT
-    would be entered only by the table, so switch_targets would leave it out of the counts
-    silently (#1231); such an instruction makes the flow unknown instead. NOPs (the closing
-    padding) are exempt. The fall-through follows successors (branch_edges); an indirect branch
-    in the tail ends the run (successors would give it switch targets), which errs toward
-    unknown flow."""
-    explicit = set()
-    for _, guarded, opcode, operands, *_ in body:
+    is entered from the body: by a BRA / JMP / CALL that can be taken from an instruction before
+    that EXIT, or from a tail instruction that is itself so entered (its target, or its
+    fall-through). A jump-table case placed after that EXIT would be entered only by the table, so
+    switch_targets would leave it out of the counts silently (#1231); such an instruction makes
+    the flow unknown instead. An edge inside an otherwise unentered part of the tail (a local back
+    edge, BRA 0x500 at 0x510) enters nothing. NOPs and the closing self-branch (BRA to itself, the
+    padding) are exempt. The fall-through follows branch_edges; an indirect branch in the tail
+    ends the run (successors would give it switch targets), which errs toward unknown flow."""
+    def edge(k):
+        """(the explicit target offset or None, may fall through) of instruction k."""
+        _, guarded, opcode, operands, *_ = body[k]
         base = base_opcode(opcode)
-        taken = base in ("BRA", "JMP") and branch_edges(guarded, opcode, operands)[0]
-        if base == "CALL" or taken:
+        target = None
+        if base == "CALL" or (base in ("BRA", "JMP") and branch_edges(guarded, opcode, operands)[0]):
             m = TARGET.search(operands)
-            if m:
-                explicit.add(int(m.group(1), 16))
-    reached = False
-    for k in range(last_exit + 1, len(body)):
-        offset, guarded, opcode = body[k][0], body[k][1], base_opcode(body[k][2])
-        reached = reached or offset in explicit
-        if not reached and opcode != "NOP":
+            target = int(m.group(1), 16) if m else None
+        if base in ("BRA", "JMP"):
+            falls = branch_edges(guarded, opcode, operands)[1]
+        else:
+            falls = not (base.startswith(("BRX", "JMX")) or (base in ("EXIT", "RET", "KILL") and not guarded))
+        return target, falls
+
+    tail = range(last_exit + 1, len(body))
+    index = {body[k][0]: k for k in tail}
+    entered = {edge(k)[0] for k in range(last_exit + 1)} & set(index)
+    reached, work = set(), [index[o] for o in entered]
+    while work:
+        k = work.pop()
+        if k in reached:
+            continue
+        reached.add(k)
+        target, falls = edge(k)
+        if target in index:
+            work.append(index[target])
+        if falls and k + 1 < len(body):
+            work.append(k + 1)
+    for k in tail:
+        offset, opcode = body[k][0], base_opcode(body[k][2])
+        padding = opcode == "NOP" or (opcode == "BRA" and edge(k)[0] == offset)
+        if k not in reached and not padding:
             return False
-        if opcode in ("BRA", "JMP"):
-            # successors' fall-through: a guard, a predicate operand (BRA.U !UP0), BRA.DIV
-            reached = reached and branch_edges(guarded, body[k][2], body[k][3])[1]
-        elif opcode.startswith(("BRX", "JMX")) or (
-                opcode in ("EXIT", "RET", "KILL") and not guarded):
-            reached = False
     return True
 
 
