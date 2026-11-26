@@ -767,6 +767,8 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
 #pragma unroll
             for (int it = 0; it < KS / 1024; ++it) slice(it);
         } else {
+            // lab #1236: two slices a trip, so a T 6 / T 7 warp keeps T 8's loads in flight
+#pragma unroll 2
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
         if constexpr (gated || kRows * T != 8) {
