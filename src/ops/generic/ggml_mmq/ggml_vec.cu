@@ -13,6 +13,8 @@
 
 #include "core/device_class.h"
 #include "core/kernel_occupancy.h"
+
+#include <cstdlib>
 #include "core/pdl.cuh"
 #include "ops/generic/kernel_facts.h"
 
@@ -1255,6 +1257,12 @@ int vec_slots() {
 
 template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
 void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t stream) {
+    // lab #1236: NINFERNO_LAB_VEC_PERSM=N caps the persistent grid at N CTAs an SM (the rows-open test).
+    static const int lab_persm = [] {
+        const char* v = std::getenv("NINFERNO_LAB_VEC_PERSM");
+        return v ? std::atoi(v) : 0;
+    }();
+    if (lab_persm > 0) slots = std::min(slots, lab_persm * device_facts().sm_count);
     const int blocks = std::min(groups, slots);
     if (LaunchShape* described = describe_target()) {
         if (substituted_device_class() != nullptr) {
