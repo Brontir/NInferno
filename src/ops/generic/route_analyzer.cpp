@@ -815,7 +815,7 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
     const double peak = std::max(pipe(r, &PipeCounts::ldg_peak), 1.0);
     const double excess =
         std::max(0.0, pipe(r, &PipeCounts::sb_waits_global) - peak * slices / trips);
-    const double wait = trips * excess * c.l2lat_ns;
+    const double wait = 0.0 * trips * excess * c.l2lat_ns; // lab: without the vec wait term
     const auto rnd  = [&](double nc) {
         const double d   = nc * bg / c.bus;
         const double cps = std::ceil(nc / c.sms);
