@@ -66,7 +66,16 @@ std::uint64_t Model::host_to_device_bytes() const noexcept {
 }
 
 std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceContext& device) {
-    artifact::Reader reader(path);
+    const artifact::Reader reader(path);
+    return build(reader, &device);
+}
+
+std::unique_ptr<Model> Model::describe(const artifact::Directory& directory) {
+    const auto reader = artifact::Reader::detached(directory);
+    return build(reader, nullptr);
+}
+
+std::unique_ptr<Model> Model::build(const artifact::Reader& reader, DeviceContext* device) {
     const auto& text = loading::open_text_component(reader, "inkling2");
     auto model       = std::unique_ptr<Model>(new Model());
     model->config_   = parse_config(text);
@@ -141,7 +150,7 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         }
     }
 
-    model->backing_ = demands.materialize(device);
+    model->backing_ = device != nullptr ? demands.materialize(*device) : demands.describe();
     const Prepare prepare(demands, *model->backing_, /*recorded*/ false);
     auto& w                  = model->weights_;
     w.token_embedding.weight = native_weight(prepare.view(embedding));

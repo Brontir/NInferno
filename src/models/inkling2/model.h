@@ -19,6 +19,11 @@ namespace ninferno::models {
 struct ArtifactBacking;
 } // namespace ninferno::models
 
+namespace ninferno::artifact {
+struct Directory;
+class Reader;
+} // namespace ninferno::artifact
+
 namespace ninferno::models::inkling2 {
 
 using Projection = ops::SingleProjectionWeight;
@@ -57,6 +62,12 @@ struct Weights {
 class Model {
 public:
     static std::unique_ptr<Model> load(const std::filesystem::path& path, DeviceContext& device);
+    // The model an artifact's directory describes, without its payload or a device (the plan
+    // without the weights, #615): the parameters load binds and prepares, each a view of its
+    // object at an address that is never read (loading::Demands::describe), so what the start's
+    // workspace planner reads (target_workspace_plan) is the start's. Throws where load would
+    // refuse the bindings, or where one reads the payload.
+    static std::unique_ptr<Model> describe(const artifact::Directory& directory);
     ~Model();
 
     [[nodiscard]] const Config& config() const noexcept { return config_; }
@@ -70,6 +81,8 @@ public:
 
 private:
     Model() = default;
+    // load and describe: `device` null binds without the payload.
+    static std::unique_ptr<Model> build(const artifact::Reader& reader, DeviceContext* device);
     Config config_;
     Weights weights_;
     std::unique_ptr<ArtifactBacking> backing_;

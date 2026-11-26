@@ -108,25 +108,8 @@ public:
     }
 
     [[nodiscard]] WorkspacePlan workspace_plan(const SequencePlanImpl& plan) const override {
-        const auto chunk = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
-        const auto batch = static_cast<std::int32_t>(plan.max_concurrency);
         const ops::ScopedInvariantRoutes routes(invariant_);
-        WorkspacePlan out;
-        {
-            const ops::ScopedPrefillRoutes prefill(true);
-            out.text_prefill = Pass::work_bytes(model_, chunk) +
-                               ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, 1);
-        }
-        out.ordinary_round =
-            Pass::work_bytes(model_, batch) +
-            ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, batch);
-        if (plan.causal_scoring) {
-            out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
-                traits_.output_rows, model_.weights().output_head);
-        }
-        out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.causal_score});
-        out.capacity         = out.general_capacity;
-        return out;
+        return target_workspace_plan(model_, traits_.public_tokens, plan);
     }
 
     [[nodiscard]] std::uint32_t prefill_call_tokens(std::uint32_t chunk, std::uint32_t cursor,
@@ -311,6 +294,27 @@ make_program_execution(const Model& model, DeviceContext& device, std::int32_t p
                        ActivationMode activations, EnginePurpose purpose) {
     (void)device;
     return std::make_unique<const Inkling2Execution>(model, public_tokens, activations, purpose);
+}
+
+WorkspacePlan target_workspace_plan(const Model& model, std::int32_t public_tokens,
+                                    const SequencePlanImpl& plan) {
+    const auto chunk = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
+    const auto batch = static_cast<std::int32_t>(plan.max_concurrency);
+    WorkspacePlan out;
+    {
+        const ops::ScopedPrefillRoutes prefill(true);
+        out.text_prefill = Pass::work_bytes(model, chunk) +
+                           ops::sampling_workspace_capacity_bytes(public_tokens, 1, 1);
+    }
+    out.ordinary_round = Pass::work_bytes(model, batch) +
+                         ops::sampling_workspace_capacity_bytes(public_tokens, 1, batch);
+    if (plan.causal_scoring) {
+        out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+            model.config().vocab_rows, model.weights().output_head);
+    }
+    out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.causal_score});
+    out.capacity         = out.general_capacity;
+    return out;
 }
 
 } // namespace ninferno::models::inkling2

@@ -27,4 +27,14 @@ make_program_execution(const Model& model, DeviceContext& device, std::int32_t p
 // rings, every visit slot's convolution history.
 [[nodiscard]] StateShape state_shape(const Config& config, std::int32_t public_tokens);
 
+// The arena the start's execution sizes for `plan` (Inkling2Execution::workspace_plan): a prefill
+// chunk's pass, a decode round's pass over the plan's concurrency, each with the sampler of the
+// rows it draws for, and under causal scoring the scoring tiles; their widest is the capacity.
+// `public_tokens` the sampler's domain. The plan without the weights calls it over a described
+// model (Model::describe, #615). The caller sets the activations' route profile
+// (ops::ScopedInvariantRoutes under exact).
+[[nodiscard]] qwen3_5::detail::WorkspacePlan
+target_workspace_plan(const Model& model, std::int32_t public_tokens,
+                      const qwen3_5::detail::SequencePlanImpl& plan);
+
 } // namespace ninferno::models::inkling2

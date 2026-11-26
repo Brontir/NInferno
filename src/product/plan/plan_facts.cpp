@@ -1603,10 +1603,11 @@ namespace {
 PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::string& where);
 
 // The families whose workspace query binds the model over the artifact's directory (#615): Qwen
-// 3.5 (W2), the dense decoder and NemotronH (W3).
+// 3.5 (W2), the dense decoder and NemotronH (W3), Inkling 2.
 bool binds_directory(const runtime::PlanModelFacts& model) {
     const std::string& type = model.model_type;
-    return type == "qwen3_5_text" || type == "qwen3_5_moe_text" || runtime::hf_decoder_family(type);
+    return type == "qwen3_5_text" || type == "qwen3_5_moe_text" ||
+           runtime::hf_decoder_family(type) || type == "inkling2_text";
 }
 
 // What the workspace query reads of an artifact beside its facts (#615): its directory and its
