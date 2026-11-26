@@ -1383,7 +1383,7 @@ class RegisterAllocations(unittest.TestCase):
         # One register count, other loop counts: another schedule ptxas makes at that count
         # (#1226), kept as the section has it (no flip).
         same = {key: (lo, 0, 0, 0, b)}
-        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), old)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), {key: old[key]})
         # extract --no-sass: the build's rows carry no loop; none is kept, so none mixes schemas.
         bare = {key: (hi, 0, 0, 0, None), other: (91, 0, 0, 0, None)}
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
