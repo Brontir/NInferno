@@ -360,10 +360,13 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     const double rows_cta = 16.0 * M * A, warps = A * B;
     const double ctas  = std::ceil(n / rows_cta) * passes * C;
     // A launch of C-CTA clusters holds fewer CTAs than a plain one (a cluster lives in one GPC; 2
-    // an SM on GB20x whatever the threads): the cluster facts' slots an SM (#1228).
+    // an SM on GB20x whatever the threads): the cluster facts' slots an SM over this board's SMs,
+    // in whole clusters (the nearest: the RTX 5090's 328 CTAs at C 8 give the RTX 5070 Ti 17
+    // clusters, 136 CTAs, as its own launch holds), as CTAs an SM (#1228, #1234).
     const Card::ClusterSize* cl = C > 1 ? c.cluster(C) : nullptr;
-    const double occ            = cl ? std::min(occupancy(c, warps, r.registers), cl->slots_sm)
-                                     : occupancy(c, warps, r.registers);
+    const double whole          = cl ? C * std::floor(cl->slots_sm * sms / C + 0.5) / sms : 0.0;
+    const double occ =
+        cl ? std::min(occupancy(c, warps, r.registers), whole) : occupancy(c, warps, r.registers);
     const double kiter = loop_i(r, &LoopCounts::k_iter), slots = sms * occ;
     const double trips = k / (B * C * kiter);
     const double nfull = std::floor(ctas / slots);

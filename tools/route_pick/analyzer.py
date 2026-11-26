@@ -223,8 +223,10 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     occ = occupancy(c, warps, _num(r['registers']))
     if C > 1:
         # A launch of C-CTA clusters holds fewer CTAs than a plain one (a cluster lives in one GPC; 2 an SM on GB20x
-        # whatever the threads): the cluster facts' slots an SM (#1228).
-        occ = min(occ, c['cluster'][C]['slots_sm'])
+        # whatever the threads): the cluster facts' slots an SM over this board's SMs, in whole clusters (the nearest:
+        # the RTX 5090's 328 CTAs at C 8 give the RTX 5070 Ti 17 clusters, 136 CTAs, as its own launch holds), as CTAs
+        # an SM (#1228, #1234).
+        occ = min(occ, C * math.floor(c['cluster'][C]['slots_sm'] * sms / C + 0.5) / sms)
     kiter, slots = _num(r['k_iter'], 256.0), sms * occ
     trips = k / (B * C * kiter)
     nfull = math.floor(ctas / slots)
