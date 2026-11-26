@@ -109,6 +109,11 @@ int main(int argc, char** argv) {
         expect(qwen.verdict == Verdict::Supported && qwen.role == "model" &&
                    qwen.reason.find("not checked") != std::string::npos,
                "a dense decoder from the hub's part of config.json, its fields not checked");
+        // Inkling 2 from the hub's part of config.json, both classes the converter takes (#1226).
+        for (const char* arch :
+             {"Inkling2LoopForCausalLM", "Inkling2LoopForConditionalGeneration"}) {
+            expect(of(chat(arch)).verdict == Verdict::Supported, std::string("Inkling 2: ") + arch);
+        }
         expect(of(chat("Qwen3_5ForConditionalGeneration")).verdict == Verdict::Supported,
                "Qwen3.5");
         const auto dflash = of(chat("DFlashDraftModel"));
@@ -129,6 +134,12 @@ int main(int argc, char** argv) {
         expect(says(of(g), Verdict::Unsupported, "lfm2"), "a GGUF of another architecture");
         g.gguf_architecture = "qwen35";
         expect(of(g).verdict == Verdict::Supported, "a Qwen3.5 GGUF");
+        // Inkling 2's GGUF under both names map_gguf_model accepts (#1226 codex).
+        for (const char* name : {"inkling2_loop", "inkling2"}) {
+            g.gguf_architecture = name;
+            expect(of(g).verdict == Verdict::Supported, std::string("an Inkling 2 GGUF: ") + name);
+        }
+        g.gguf_architecture = "qwen35";
         // cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF: 374 NVFP4 matrices beside Q5_K/Q6_K/Q8_0
         // ones. The official NVFP4 layout (NVFP4 beside unquantized tensors) and a K-quant run.
         g.gguf_nvfp4_matrices = 374;

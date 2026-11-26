@@ -2975,9 +2975,9 @@ void map_inkling2(Mapper& m) {
 
 const std::vector<std::string>& supported_gguf_architectures() {
     static const std::vector<std::string> names = [] {
-        std::vector<std::string> out = {"qwen35",         "qwen35moe",        "gemma4",
-                                        "gpt-oss",        "gemma4-assistant", "dflash",
-                                        "nemotron_h_moe", "inkling2_loop",    "clip"};
+        std::vector<std::string> out = {
+            "qwen35", "qwen35moe",      "gemma4",        "gpt-oss",  "gemma4-assistant",
+            "dflash", "nemotron_h_moe", "inkling2_loop", "inkling2", "clip"};
         for (const auto& arch : kDenseArchs) { out.emplace_back(arch.gguf); }
         return out;
     }();
