@@ -187,6 +187,7 @@ class LoopFinder(unittest.TestCase):
         body = body_of(KERNEL)
         self.assertEqual(sc.branch_edges(False, "BRA.U", "!UP0, 0x530"), (True, True))
         self.assertEqual(sc.branch_edges(False, "BRA.DIV", "~URZ, 0x530"), (True, True))
+        self.assertEqual(sc.branch_edges(False, "BRA.CONV", "~URZ, 0x530"), (True, True))
         self.assertEqual(sc.branch_edges(False, "BRA.U", "UPT, 0x530"), (True, False))
         self.assertEqual(sc.branch_edges(False, "BRA", "!PT, 0x530"), (False, True))
         self.assertEqual(sc.branch_edges(True, "BRA", "0x530"), (True, True))
@@ -195,6 +196,20 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(succ[7], [8])  # BRA 0x100 at index 7: the loop header, index 8
         self.assertIsNone(sc.successors(body + [(0x530, False, "BRXU", "UR4 -0x530")]))
         self.assertIsNone(sc.successors(body + [(0x530, False, "BRA", "0x9000")]))
+
+    def test_runtime_mask_shuffle_in_the_loop(self):
+        # A runtime-mask __shfl_sync in the K loop (ptxas, sm_75 / sm_86): BRA.CONV, its
+        # fall-through MOV and the CALL of the callee after the last EXIT. The fall-through is
+        # part of the iteration (#1241): FFMA, BRA.CONV, MOV, CALL, ISETP, BRA.
+        conv = [(0x000, "MOV R1, R2 ;"), (0x010, "FFMA R4, R5, R6, R4 ;"), (0x020, "BRA.CONV 0x050 ;"),
+                (0x030, "MOV R2, 0x40 ;"), (0x040, "CALL.REL.NOINC 0x090 ;"),
+                (0x050, "ISETP.GE.AND P0, PT, R1, R3, PT ;"), (0x060, "@!P0 BRA 0x010 ;"),
+                (0x070, "EXIT ;"), (0x080, "BRA 0x080 ;"),
+                (0x090, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x0a0, "RET.REL.NODEC R20 0x0 ;")]
+        c = sc.loop_counts(body_of(conv), tiles=1)
+        self.assertEqual(c.loops, 1)
+        self.assertEqual(c.total, 6)
+        self.assertEqual(c.shfl, 0)  # the callee is outside the loop's count
 
     def test_no_loop_and_unknown_flow(self):
         straight = [l for l in KERNEL if l[0] not in (0x2f0, 0x300)]

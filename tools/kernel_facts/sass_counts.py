@@ -11,10 +11,10 @@ while the cycles each pipe takes are the card's facts.
 How the loop is found (`loop_counts`):
 1. The function's instructions are parsed from `cuobjdump -sass` text: offset, guard predicate,
    opcode, operands. A branch's target is the trailing hex offset of its operands.
-2. Basic blocks and their edges: a block ends at a branch (BRA, BRA.U, BRA.DIV), an EXIT or a
-   RET; a guarded or predicated branch also falls through (one on PT / UPT does not, one on !PT
-   is never taken); CALL falls through (the callee is outside the loop's count, see below); an
-   indirect branch (BRX, JMX, their uniform forms) makes the control flow unknown and the counts
+2. Basic blocks and their edges: a block ends at a branch (BRA, BRA.U, BRA.DIV, BRA.CONV), an
+   EXIT or a RET; a guarded or predicated branch also falls through (one on PT / UPT does not,
+   one on !PT is never taken), so do BRA.DIV and BRA.CONV; CALL falls through (the callee is
+   outside the loop's count, see below); an indirect branch (BRX, JMX, their uniform forms) makes the control flow unknown and the counts
    `loops 0`. Blocks the entry does not reach (a callee, the trailing self-branch) take no part.
 3. Dominators over the blocks; a back edge is an edge into a block that dominates its source;
    the natural loop of a back edge is its header plus every block that reaches the source
@@ -341,8 +341,10 @@ def branch_predicate(operands):
 
 def branch_edges(guarded, opcode, operands):
     """(takes the target, may fall through) of a branch: a guard or a predicate operand makes it
-    conditional, PT / UPT unconditional, !PT / !UPT never taken, BRA.DIV divergent."""
-    if opcode.startswith("BRA.DIV"):
+    conditional, PT / UPT unconditional, !PT / !UPT never taken, BRA.DIV divergent. BRA.CONV (a
+    runtime-mask shfl / warpsync: ptxas falls through to a MOV and the CALL of its callee placed
+    after the last EXIT) may fall through as well (#1241)."""
+    if opcode.startswith(("BRA.DIV", "BRA.CONV")):
         return True, True
     predicate = branch_predicate(operands)
     if predicate in ("!PT", "!UPT"):
@@ -372,10 +374,7 @@ def tail_reached(body, last_exit):
             m = TARGET.search(operands)
             target = int(m.group(1), 16) if m else None
         if base in ("BRA", "JMP"):
-            # BRA.CONV (a runtime-mask shfl / warpsync: ptxas falls through to the CALL of its
-            # callee after the last EXIT) may fall through, though branch_edges calls it
-            # unconditional (#1241); counted so here only, the loop counts keep successors' view.
-            falls = branch_edges(guarded, opcode, operands)[1] or opcode.startswith("BRA.CONV")
+            falls = branch_edges(guarded, opcode, operands)[1]
         else:
             falls = not (base.startswith(("BRX", "JMX")) or (base in ("EXIT", "RET", "KILL") and not guarded))
         return target, falls
