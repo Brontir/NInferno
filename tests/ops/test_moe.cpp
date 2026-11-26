@@ -1433,13 +1433,16 @@ Case inkling2_like() {
     return c;
 }
 
-// The same bank with caps small enough that both soft caps saturate on the case's gate and up
-// values (alpha 0.5, limit 1.5, unequal): a swapped alpha and limit, or a dropped cap, misses.
+// The same bank with an expert bias (uniform +-0.5) and caps small enough to bind: the bias breaks
+// the fixture's gate == up rows (its code and scale patterns repeat at the 192-row offset) and
+// lifts the values past both caps (alpha 0.25, limit 0.75, unequal), so a swapped alpha / limit
+// (~17 %), a dropped alpha cap or a dropped limit cap (~12 %) misses the 1.5e-2 bound.
 Case inkling2_capped() {
     Case c         = inkling2_like();
     c.label        = "inkling2-like nvfp4 E128 k8 situ capped";
-    c.config.alpha = 0.5F;
-    c.config.limit = 1.5F;
+    c.config.alpha = 0.25F;
+    c.config.limit = 0.75F;
+    c.expert_bias  = true;
     return c;
 }
 
