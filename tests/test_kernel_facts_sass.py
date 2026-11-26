@@ -1380,9 +1380,10 @@ class RegisterAllocations(unittest.TestCase):
         moved = {key: (hi, 0, 0, 16, b)}
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, moved), moved)
         self.assertEqual(kernel_facts.keep_allocations("moegemm", "999", old, new), new)
-        # One register count, other loop counts: a real loop change, written.
+        # One register count, other loop counts: another schedule ptxas makes at that count
+        # (#1226), kept as the section has it (no flip).
         same = {key: (lo, 0, 0, 0, b)}
-        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), same)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), old)
         # extract --no-sass: the build's rows carry no loop; none is kept, so none mixes schemas.
         bare = {key: (hi, 0, 0, 0, None), other: (91, 0, 0, 0, None)}
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
@@ -1415,10 +1416,9 @@ class RegisterAllocations(unittest.TestCase):
         key = ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)
         self.assertNotIn(key, kernel_facts.REGISTER_ALLOCATIONS["moegemm"].get("75", {}))
         self.assertEqual(check(key, "75", 77), 1)
-        # extract --update writes the build's loop counts at one count (a source change reaches the
-        # section) and keeps the section's row at another counted count.
+        # extract --update keeps the section's row at one count and at another (no flip).
         old, same = {key: (77, 0, 0, 0, a)}, {key: (77, 0, 0, 0, b)}
-        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, same), same)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, same), old)
         self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, {key: (72, 0, 0, 0, b)}),
                          old)
 
@@ -1483,8 +1483,10 @@ class RegisterAllocations(unittest.TestCase):
         old = {key: (162, 0, 0, 0, a)}
         self.assertEqual(kernel_facts.keep_allocations("r8", "80", old, {key: (160, 0, 0, 0, b)}),
                          old)
-        for arch, new in (("80", {key: (162, 0, 0, 0, b)}), ("86", {key: (160, 0, 0, 0, b)}),
-                          ("80", {key: (160, 0, 0, 16, b)})):
+        # The same count, other loop counts: kept (#1226); another arch or another resource: written.
+        self.assertEqual(kernel_facts.keep_allocations("r8", "80", old, {key: (162, 0, 0, 0, b)}),
+                         old)
+        for arch, new in (("86", {key: (160, 0, 0, 0, b)}), ("80", {key: (160, 0, 0, 16, b)})):
             self.assertEqual(kernel_facts.keep_allocations("r8", arch, old, new), new, arch)
 
     def test_sm70_relocations_read_for_the_emulated_mma_families(self):

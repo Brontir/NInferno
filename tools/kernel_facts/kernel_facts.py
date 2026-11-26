@@ -1643,8 +1643,9 @@ def sass_unstable(family, key):
 # the allocation. No price reads these rows: the MoE expert law prices the ggml K-quant decoders
 # (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check holds such a row to its stack,
 # local and shared bytes and to a register count among the ones counted here, prints both counts and
-# never fails on the loop counts, at another count or at the same one (extract --update writes the
-# build's loop counts at the same count, keeps the section's row at another): ptxas also makes two schedules
+# never fails on the loop counts, at another count or at the same one (extract --update keeps the
+# section's row either way, so a re-extract does not flip it; a source change to these rows is
+# re-extracted by hand, as no check can tell it from the other schedule): ptxas also makes two schedules
 # at one count of these rows (sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77 registers, outside the K
 # loop 1086 / 734 total in an RTX 4090 serve build and an RTX 4070 Ti full build; sm_86 <6> 4 1 1 1 1 3
 # at 72, 673 / 737 in two RTX 3060 full builds; nvcc 13.4.92, one source, #1226); extract --update keeps
@@ -1714,9 +1715,7 @@ def keep_allocations(family, arch, old, new):
     re-extract does not flip such rows, nor the engine's embedded snapshot with them (#968)."""
     def keep(k, v):
         # Both rows carry their loop or neither (extract --no-sass writes the resources alone).
-        # At one count the build's loop counts are written (a source change refreshes them);
-        # another counted count keeps the section's row.
-        return (k in old and (old[k][4] is None) == (v[4] is None) and old[k][0] != v[0] and
+        return (k in old and (old[k][4] is None) == (v[4] is None) and
                 register_unstable(family, arch, k, old[k], v))
     return {k: old[k] if keep(k, v) else v for k, v in new.items()}
 
