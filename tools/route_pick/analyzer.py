@@ -249,6 +249,9 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     steps = 2.0 - (_num(r['latency']) if A * B <= 8 else 0.0)
     bw = _num(r['ldg_bytes']) + _num(r.get('ld_bytes')) + _num(r.get('ldgsts_bytes'))
     w_dram = steps * window(c, P, bw / steps)              # the chain's DRAM round trips
+    # A codebook format's lookups in shared memory (the loop's LDS): each exposes the shared latency on the chain, as
+    # ggml_mmq's chain charges its shared waits (round 24, #1236).
+    w_dram += _num(r.get('lds')) * c['smem_lat'] / clk
     st = _num(r['stall_sum']) / clk                        # and its issue (static stall clocks)
     tot = _num(r['total'])
     # #1165: an emulated MMA (sm_70 NINFERNO_FMA_MMA, shape '...EMU') is a call whose body the loop's `total` leaves out:
@@ -394,6 +397,8 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
     gw = _num(r.get('glb_waits'))
     trip = _num(r['stall_sum']) / clk + gw * window(c, P, _num(r['ldg_bytes']) / max(gw, 1.0))
     chain = trips * trip + out
+    if T > 1:                                              # an NT-token kernel runs T of its NT token slots (round 24)
+        chain *= T / max(_num(r['nt']), 1.0)
     if T <= 1:                                             # the CTA quantizes the activation: its loads are L2 latencies
         chain += k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
     rounds = math.ceil(ctas / slots)
@@ -524,14 +529,16 @@ def vec_load_unit(c, fmt, T):
     return _VLU[key]
 
 
-def sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, dram_trips, bw, ld_clk, icf=1.0, warps=VEC_WARPS):
+def sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, dram_trips, bw, ld_clk, icf=1.0, warps=VEC_WARPS,
+            extra=0.0):
     """ns one CTA's warp takes for its whole K on an SM that holds cps such CTAs: the larger of
       its own chain   trips x the loop's stall clocks + the epilogue's ('o'), times the icache step, and a DRAM window a round trip;
       the issue bound ('i') one warp of each resident CTA shares a partition: cps x the instructions, a clock each, times the icache step;
-      the load unit   ('l') every resident warp's loads through the SM's one load unit: cps x warps x ld_clk (the whole K's clocks)."""
+      the load unit   ('l') every resident warp's loads through the SM's one load unit: cps x warps x ld_clk (the whole K's clocks).
+    extra: ns more on the chain (vec's waits beyond its loads in flight)."""
     clk = c['clk']
     og = 'o' in mode
-    sm = icf * (trips * stall + (o_stall if og else 0.0)) / clk + dram_trips * window(c, P, bw)
+    sm = icf * (trips * stall + (o_stall if og else 0.0)) / clk + dram_trips * window(c, P, bw) + extra
     if 'i' in mode:
         sm = max(sm, icf * cps * (trips * tot + (o_tot if og else 0.0)) / clk)
     if 'l' in mode:
@@ -578,11 +585,16 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
     form, mode = P.get('VEC_FORM', 'h'), P.get('VEC_SM', 'iol')
     tot, stall, o_tot, o_stall, trips, ld, body = vec_counts(c, P, q, fmt, k, T)
     bw = bg / VEC_WARPS / (k / 1024.0)             # DRAM bytes a warp keeps in flight: a 1024-value slice of its rows
+    # The trip's waits on global loads beyond those its loads in flight cover (the slices it spans x ldg_peak): each a
+    # further round trip, served from L2 (the slice's rows are open: round 24, #1236; the T 6 / 7 gated instances wait
+    # 22-23 times a trip with 12-13 loads in flight, T 8 13 times with 16).
+    excess = max(0.0, _num(q.get('sb_waits_global')) - max(_num(q.get('ldg_peak')), 1.0) * (k / 1024.0) / trips)
+    wait = trips * excess * c['l2lat_ns']
 
     def rnd(nc):
         d = nc * bg / bus
         cps = math.ceil(nc / c['sms'])
-        sm = sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, k / 1024.0, bw, ld, 1.0)
+        sm = sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, k / 1024.0, bw, ld, 1.0, extra=wait)
         return math.hypot(sm, d) if form == 'h' else sm + d if form == 's' else max(sm, d)
 
     return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + l0 + (rounds - 1) * rnd(ctas) + rnd(last)
