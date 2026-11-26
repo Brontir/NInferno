@@ -828,8 +828,7 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
     const double res = launch_ns(c, s, L->ctas) + launch_ns(c, s, std::ceil(k / 256.0) * T) +
            second_kernel(c, s) + c.l0 + (rounds - 1) * rnd(L->ctas) + rnd(last);
     if (std::getenv("NINF_DBG") && c.sms == 82 && ep == Epilogue::SwiGlu)
-        std::fprintf(stderr, "DBGVEC n %g k %d T %d ctas %d groups %d trips %g tot %g stall %g o_tot %g o_stall %g ld %g bw %g wait %g peak %g sbw %g price %g l0 %g
-",
+        std::fprintf(stderr, "DBGVEC n %g k %d T %d ctas %d groups %d trips %g tot %g stall %g o_tot %g o_stall %g ld %g bw %g wait %g peak %g sbw %g price %g l0 %g\n",
                      n, k, T, L->ctas, L->groups, trips, tot, stall, o_tot, o_stall, ld, bw, wait, peak, pipe(r, &PipeCounts::sb_waits_global), res, c.l0);
     return res;
 }
