@@ -375,7 +375,8 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         int dev = 0, smem_sm = 0, reserved = 0;
         CUDA_CHECK(cudaFuncGetAttributes(&fa, rmma_kernel<Decoder, Schedule, E, Latency, Sums>));
         CUDA_CHECK(cudaGetDevice(&dev));
-        CUDA_CHECK(cudaDeviceGetAttribute(&smem_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev));
+        CUDA_CHECK(
+            cudaDeviceGetAttribute(&smem_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev));
         CUDA_CHECK(cudaDeviceGetAttribute(&reserved, cudaDevAttrReservedSharedMemoryPerBlock, dev));
         const long per_cta = smem_sm / (want + 1) + 1 - reserved;
         const long dyn     = per_cta - static_cast<long>(fa.sharedSizeBytes);
