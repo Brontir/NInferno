@@ -26,6 +26,7 @@
 #include <cuda_runtime.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -157,7 +158,17 @@ int check_case(const Case& c, cudaStream_t stream) {
                                    .value_or(generic::heuristic_route(problem, d.weight, t, false));
         const auto chosen    = generic::select_route(problem, d.weight, t, false);
         if (!tuned[t]) {
-            if (!(chosen == heuristic)) {
+            // A width the engine's analyzer answers (route_analyzer.h device_routes: T 1-8 off
+            // the held chips, ahead of the tuner's entry and the heuristic, #1227) takes a route
+            // of its list; any other width keeps the heuristic.
+            const auto listed = ops::route_analyzer::device_routes(problem, t);
+            if (!listed.empty()) {
+                if (std::find(listed.begin(), listed.end(), chosen) == listed.end()) {
+                    std::cerr << c.name << " T=" << t << ": untuned width "
+                              << generic::route_name(chosen) << " is not in the analyzer's list\n";
+                    ++failures;
+                }
+            } else if (!(chosen == heuristic)) {
                 std::cerr << c.name << " T=" << t << ": untuned width left the heuristic\n";
                 ++failures;
             }
