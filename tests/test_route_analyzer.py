@@ -108,7 +108,7 @@ def main():
     # The adds instance (#1243): RMMA_MIN_TERM is generic_rmma_decoders.h's min_term set, and the launch takes the
     # instance at four token tiles or more on sm_80 on only.
     with open(os.path.join(ROOT, 'src', 'ops', 'generic', 'generic_rmma_decoders.h'), encoding='utf-8') as f:
-        rows = re.findall(r'return \{"([^"]+)", "[^"]*", (\w+), (\w+), (\w+), (\w+), (\w+), (\w+)\};', f.read())
+        rows = re.findall(r'\{"([^"]+)", "[^"]*", (\w+), (\w+), (\w+), (\w+), (\w+), (\w+)\}', f.read())
     min_term = sorted(set(d for d, *flags in rows if flags[5] == 'true'))
     assert min_term == sorted(analyzer.RMMA_MIN_TERM), (min_term, analyzer.RMMA_MIN_TERM)
     c89 = analyzer.card_of(sm89, F)
