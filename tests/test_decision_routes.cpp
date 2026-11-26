@@ -172,7 +172,7 @@ int main() {
     // shape, ahead of a table), the table moves the slice's verify widths, T 9-16; elsewhere its
     // decode width 4 as well.
     const generic::Problem q8_call{QType::Q8_G32_FP16, LinearPolicy::A16Only, 1024, 4096,
-                                   Epilogue::Store};
+                                   generic::Epilogue::Store};
     const std::int32_t width = ops::route_analyzer::device_routes(q8_call, 4).empty() ? 4 : 12;
     std::string moved;
     for (const char* route : {"rmma.m1.n1.w2x2", "rmma.m1.n1.w1x4"}) {
