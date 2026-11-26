@@ -88,6 +88,18 @@ def load_facts(root):
                                                          (1024, 'floor_ns_1024'), (4096, 'floor_ns_4096')) if n and k in la)
         if arch in NARROW:
             d['nr'] = dict(zip(('cap', 'wf', 'bank'), NARROW[arch]))
+        # The cluster facts (sm_90+, isa_probe's cluster section, #1228), by cluster size: one cluster.sync(), rank 0's
+        # read of one other rank's partial of 1 / 2 weight sets (ns), and the CTAs a launch of C-CTA clusters holds an SM
+        # (the probe card's slots over its SMs). A size without all four is not there (its schedules are not priced).
+        ca = a.get('cluster')
+        if ca:
+            cf, d['cluster'] = ca.get('facts', {}), {}
+            for C in (2, 8):
+                names = ('cluster_sync_ns_c%d' % C, 'cluster_rank_ns_c%d_s1' % C, 'cluster_rank_ns_c%d_s2' % C,
+                         'cluster_slots_c%d' % C)
+                if all(n in cf for n in names):
+                    sync, r1, r2, slots = (val(cf[n]) for n in names)
+                    d['cluster'][C] = dict(sync=sync, rank={1: r1, 2: r2}, slots_sm=slots / float(ca['sms']))
         if any(d.get(f) is None for f in REQUIRED) or len(d['floor']) < 2:
             continue
         F['isa'][arch] = d

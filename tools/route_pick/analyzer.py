@@ -16,6 +16,8 @@ The price (ns):
             bytes of every row of the round at the bus rate, / warps_k); tau = the warp's chain (its DRAM round trips,
             each a window of the bytes it keeps in flight, + the loop's static stall clocks + an emulated MMA's latency on
             sm_70) or an issue bound. DRAM side = the round's bytes / bus x (rows open on the busiest SM / L1) ^ G.
+            A cN (K split over a C-CTA cluster, sm_90+): the CTAs an SM held capped at the cluster slots, and the
+            epilogue's reduce outside the loop, 2 cluster.sync() + (C - 1) rank reads (isa_probe's cluster facts, #1228).
   r8        launch + pre-pass + rounds; a round = hypot(the warp's chain: dp4a loop stall clocks + a DRAM window per
             global-wait generation, the quantizer's loop at T 1, the code outside; the round's bytes / bus).
   ggml_mmq  launch + pre-pass + waves of 128-row tiles; a unit = max(its MMA issue, its loop's stall clocks) + bytes / bus;
@@ -213,12 +215,17 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
     SM side: K trips x tau + the code outside the loop, plus the wave term (every warp's K step waits one K step's bytes
     of every row of the round at the bus rate, / warps_k); tau = the warp's chain (its DRAM round trips, each a window of
     the bytes it keeps in flight, + the loop's static stalls + an emulated MMA's latency) or an issue bound. DRAM side:
-    the round's bytes / bus, slowed by the rows open on the busiest SM (G, the one fitted exponent)."""
+    the round's bytes / bus, slowed by the rows open on the busiest SM (G, the one fitted exponent). A cN schedule (C > 1)
+    holds at most the cluster facts' CTAs an SM and adds its epilogue's reduce (two syncs, C - 1 rank reads) outside."""
     sms, clk, bus = c['sms'], c['clk'], c['bus']
     passes = math.ceil(T / (8.0 * N))                      # column passes of an n_tiles-wide tile
     rows_cta, warps = 16.0 * M * A, A * B
     ctas = math.ceil(n / rows_cta) * passes * C
     occ = occupancy(c, warps, _num(r['registers']))
+    if C > 1:
+        # A launch of C-CTA clusters holds fewer CTAs than a plain one (a cluster lives in one GPC; 2 an SM on GB20x
+        # whatever the threads): the cluster facts' slots an SM (#1228).
+        occ = min(occ, c['cluster'][C]['slots_sm'])
     kiter, slots = _num(r['k_iter'], 256.0), sms * occ
     trips = k / (B * C * kiter)
     nfull = math.floor(ctas / slots)
@@ -254,6 +261,11 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
         return math.sqrt(sm * sm + dram * dram)
 
     part = lambda x: max(min(math.ceil(x / sms), occ), 1.0)
+    if C > 1:
+        # The cN epilogue (generic_gemm.cuh): two cluster.sync() and rank 0's reads of the C - 1 other ranks' partials,
+        # one rank after another (#pragma unroll 1), each of `sets` weight sets: the cluster facts (#1228).
+        cl = c['cluster'][C]
+        out += 2.0 * cl['sync'] + (C - 1) * cl['rank'][int(sets)]
     ln = launch_ns(c, P, ctas)
     if nfull < 1:
         return ln + rnd(part(ctas), tail, out)
@@ -724,7 +736,7 @@ def _price(gpu, F, shape, route, P, issue=False):
         return volta_sub_price(c, P, n, k, T, bits, sets, fmt, ep, volta_takes(fmt, k, T))
     if m:
         M, N, A, B, C = (int(x or 1) for x in m.groups())
-        if C > 1 and c['cc'] < 90:                          # a cluster schedule needs thread-block clusters (sm_90+)
+        if C > 1 and (c['cc'] < 90 or C not in c.get('cluster', {})):   # clusters are sm_90+, priced from their facts
             return None
         key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=0)
         r = kf_row(kf, 'rmma', latency=0, **key)

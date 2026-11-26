@@ -97,6 +97,24 @@ std::vector<std::pair<std::string, std::optional<double> IsaLaunch::*>> expected
             {"floor_ns_4096", &IsaLaunch::floor_ns_4096}};
 }
 
+// The cluster facts of a row's cluster entry, by the entry's name, with their unit, written out
+// here apart from the reader (#1228).
+struct ExpectedCluster {
+    std::string name, unit;
+    const IsaClusterSize IsaCluster::* size;
+    std::optional<double> IsaClusterSize::* member;
+};
+std::vector<ExpectedCluster> expected_cluster_facts() {
+    return {{"cluster_sync_ns_c2", "ns", &IsaCluster::c2, &IsaClusterSize::sync_ns},
+            {"cluster_rank_ns_c2_s1", "ns", &IsaCluster::c2, &IsaClusterSize::rank_ns_s1},
+            {"cluster_rank_ns_c2_s2", "ns", &IsaCluster::c2, &IsaClusterSize::rank_ns_s2},
+            {"cluster_slots_c2", "ctas", &IsaCluster::c2, &IsaClusterSize::slots},
+            {"cluster_sync_ns_c8", "ns", &IsaCluster::c8, &IsaClusterSize::sync_ns},
+            {"cluster_rank_ns_c8_s1", "ns", &IsaCluster::c8, &IsaClusterSize::rank_ns_s1},
+            {"cluster_rank_ns_c8_s2", "ns", &IsaCluster::c8, &IsaClusterSize::rank_ns_s2},
+            {"cluster_slots_c8", "ctas", &IsaCluster::c8, &IsaClusterSize::slots}};
+}
+
 Json table_file() {
     const std::string path = std::string(NINFERNO_SOURCE_DIR) + "/src/core/data/isa_facts.json";
     std::ifstream in(path);
@@ -121,6 +139,39 @@ void names_are_the_tests() {
     for (const auto& [name, member] : expected_launch_facts()) launch_want.push_back(name);
     for (const std::string& n : isa_launch_fact_names()) launch_got.push_back(n);
     expect(launch_want == launch_got, "the reader takes the launch facts this test checks");
+    std::vector<std::string> cluster_want, cluster_got;
+    for (const ExpectedCluster& e : expected_cluster_facts()) cluster_want.push_back(e.name);
+    for (const std::string& n : isa_cluster_fact_names()) cluster_got.push_back(n);
+    expect(cluster_want == cluster_got, "the reader takes the cluster facts this test checks");
+}
+
+// A row's cluster entry as the file has it, alike (#1228).
+void cluster_equals(const std::optional<IsaCluster>& got, const Json& j, const std::string& where) {
+    if (!j.contains("cluster")) {
+        expect(!got.has_value(), where + ": no cluster entry, the clusters are unknown");
+        return;
+    }
+    const Json& l = j.at("cluster");
+    expect(got.has_value(), where + ": the cluster entry is read");
+    if (!got) return;
+    expect(got->card == l.at("card").get<std::string>(), where + ": cluster card");
+    expect(got->probe == l.at("tool").at("probe").get<std::string>(), where + ": cluster probe");
+    expect(got->sms == l.at("sms").get<int>(), where + ": cluster sms");
+    expect(got->size(2) == &got->c2 && got->size(8) == &got->c8 && got->size(4) == nullptr,
+           where + ": the cluster sizes measured are 2 and 8");
+    const Json& lf = l.at("facts");
+    for (const ExpectedCluster& e : expected_cluster_facts()) {
+        const std::optional<double>& v = ((*got).*e.size).*e.member;
+        const auto it                  = lf.find(e.name);
+        if (it == lf.end()) {
+            expect(!v.has_value(), where + ": cluster " + e.name + " is not in the entry: unknown");
+            continue;
+        }
+        expect(it->at("unit").get<std::string>() == e.unit,
+               where + ": cluster " + e.name + " in " + e.unit);
+        expect(v.has_value() && *v == it->at("value").get<double>(),
+               where + ": cluster " + e.name + " equals the file");
+    }
 }
 
 // A row's launch entry as the file has it: the card, the probe, the SMs and every launch fact,
@@ -178,6 +229,7 @@ void rows_equal_the_file(const Json& file) {
                                           : !row->sass_per_mma.has_value(),
                where + ": sass_per_mma, unknown when the row has none");
         launch_equals(row->launch, j, where);
+        cluster_equals(row->cluster, j, where);
         const Json& jf = j.at("facts");
         for (const Expected& e : facts) {
             const std::optional<double>& got = e.member(*row);
@@ -380,6 +432,50 @@ void parse_rules(const Json& file) {
     launch_refused([](Json& l) { l["cc"] = 89; }, "a launch entry of another cc than its row's");
     launch_refused([](Json& l) { l.erase("card"); }, "a launch entry without its card");
     launch_refused([](Json& l) { l["sms"] = 0; }, "a launch entry whose sms is not positive");
+
+    // A cluster entry (cluster_probe, #1228): alike.
+    Json cluster = {{"provenance", "Measured"},
+                    {"source", "cluster_probe_86.txt"},
+                    {"card", "NVIDIA GeForce RTX 3090"},
+                    {"cc", 86},
+                    {"sms", 82},
+                    {"tool", {{"probe", "cluster_probe 1"}}},
+                    {"notes", Json::array()},
+                    {"facts", Json::object()}};
+    value = 100.0;
+    for (const ExpectedCluster& e : expected_cluster_facts()) {
+        cluster["facts"][e.name] = {{"value", value}, {"unit", e.unit}};
+        value += 10.0;
+    }
+    {
+        Json row        = base;
+        row["cluster"]  = cluster;
+        const auto rows = parse_isa_facts(text_of(table_of(row)));
+        expect(rows.size() == 1 && rows[0].cluster.has_value(), "a cluster entry is read");
+        if (rows.size() == 1) cluster_equals(rows[0].cluster, row, "a crafted cluster entry");
+    }
+    {
+        Json row       = base;
+        row["cluster"] = cluster;
+        row["cluster"]["facts"].erase("cluster_slots_c8");
+        const auto rows = parse_isa_facts(text_of(table_of(row)));
+        expect(rows.size() == 1 && rows[0].cluster && !rows[0].cluster->c8.slots &&
+                   rows[0].cluster->c2.sync_ns == 100.0,
+               "a cluster fact the entry lacks is unknown, the others are read");
+    }
+    const auto cluster_refused = [&](const std::function<void(Json&)>& edit,
+                                     const std::string& what) {
+        Json row       = base;
+        row["cluster"] = cluster;
+        edit(row["cluster"]);
+        refused(table_of(row), what);
+    };
+    cluster_refused([](Json& l) { l["facts"]["cluster_slots_c2"]["unit"] = "ns"; },
+                    "a cluster count in another unit than ctas");
+    cluster_refused([](Json& l) { l["facts"]["cluster_sync_ns_c8"]["value"] = -1; },
+                    "a cluster fact that is not positive");
+    cluster_refused([](Json& l) { l["cc"] = 89; }, "a cluster entry of another cc than its row's");
+    cluster_refused([](Json& l) { l.erase("card"); }, "a cluster entry without its card");
 }
 
 } // namespace

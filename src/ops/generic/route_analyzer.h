@@ -95,6 +95,18 @@ struct Card {
     // (B)
     double nr_cap = 0, nr_wf = 0;
     int nr_bank = 0;
+    // The cluster facts by cluster size (sm_90+, isa_facts' cluster entry, #1228): one
+    // cluster.sync() and rank 0's read of one other rank's partial of 1 / 2 weight sets (ns),
+    // and the CTAs a launch of C-CTA clusters holds an SM (the probe card's slots over its SMs).
+    // A size the entry lacks a fact of is not here: its cN schedules are not priced.
+    struct ClusterSize {
+        double sync = 0, rank1 = 0, rank2 = 0, slots_sm = 0;
+    };
+    std::optional<ClusterSize> cluster2, cluster8;
+    [[nodiscard]] const ClusterSize* cluster(int C) const {
+        const auto& o = C == 2 ? cluster2 : cluster8;
+        return (C == 2 || C == 8) && o ? &*o : nullptr;
+    }
 };
 
 [[nodiscard]] std::optional<Card> card_of(const GpuFactsRow& row);
