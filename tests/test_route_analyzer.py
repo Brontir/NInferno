@@ -6,6 +6,7 @@ price is a positive finite number. A card of an architecture without facts gets 
 import json
 import math
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -104,6 +105,16 @@ def main():
     one_wave = int(16 * sms * analyzer.occupancy(c75, 4, 255.0))
     assert analyzer.latency_launched(c75, 'swiglu', 1, 4, 1, one_wave, same, big)
     assert not analyzer.latency_launched(c75, 'swiglu', 1, 4, 1, 16 * sms * int(analyzer.occupancy(c75, 4, 128.0)), same, big)
+    # The adds instance (#1243): RMMA_MIN_TERM is generic_rmma_decoders.h's min_term set, and the launch takes the
+    # instance at four token tiles or more on sm_80 on only.
+    with open(os.path.join(ROOT, 'src', 'ops', 'generic', 'generic_rmma_decoders.h'), encoding='utf-8') as f:
+        rows = re.findall(r'return \{"([^"]+)", "[^"]*", (\w+), (\w+), (\w+), (\w+), (\w+), (\w+)\};', f.read())
+    min_term = sorted(set(d for d, *flags in rows if flags[5] == 'true'))
+    assert min_term == sorted(analyzer.RMMA_MIN_TERM), (min_term, analyzer.RMMA_MIN_TERM)
+    c89 = analyzer.card_of(sm89, F)
+    assert analyzer.rmma_adds_launched(c89, 'q4k', 4) and analyzer.rmma_adds_launched(c89, 'q4k', 8)
+    assert not analyzer.rmma_adds_launched(c89, 'q4k', 2) and not analyzer.rmma_adds_launched(c89, 'q6k', 4)
+    assert not analyzer.rmma_adds_launched(c75, 'q4k', 4)
     print('boards %d, shapes %d, T 1-8: %d failures' % (len(bs), len(shapes), failures))
     return 1 if failures else 0
 
