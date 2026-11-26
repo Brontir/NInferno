@@ -94,6 +94,19 @@ ninferno_cuda_lineinfo(ninferno_gemma4)
 target_link_libraries(ninferno_gemma4 PUBLIC ninferno_artifact ninferno::ops ninferno::core
   ninferno_model_common ninferno_speculation)
 
+# Inkling 2 text: its own family (docs/maintainer/inkling2-model.md).
+add_library(ninferno_inkling2 STATIC
+  inkling2/config.cpp
+  inkling2/load.cpp
+  inkling2/pass.cu
+  inkling2/target.cu)
+ninferno_internal_includes(ninferno_inkling2)
+ninferno_cuda_lineinfo(ninferno_inkling2)
+target_link_libraries(ninferno_inkling2 PUBLIC ninferno_artifact ninferno::ops ninferno::core
+  ninferno_model_common)
+target_sources(ninferno_model_runtime PRIVATE inkling2/program_family.cpp)
+target_link_libraries(ninferno_model_runtime PUBLIC ninferno_inkling2)
+
 # Gemma 4 as a family of the one Program (serve): its execution over the Program's state.
 target_sources(ninferno_model_runtime PRIVATE gemma4/program_family.cpp)
 target_link_libraries(ninferno_model_runtime PUBLIC ninferno_gemma4)

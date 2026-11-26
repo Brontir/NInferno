@@ -12,6 +12,7 @@
 #include "ninferno/ops/route_table.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/moe/moe_route_query.h"
@@ -113,16 +114,10 @@ int shipped_picks() {
                                std::istreambuf_iterator<char>());
         const std::string name = f.path().filename().string();
         std::smatch m, e, r;
-        // Every file holds ranked lists (every class of an analyzer architecture) but a held chip's
-        // (gen.py HELD_CHIPS: AD102, #1211; TU102 / TU104 / TU106, #1183), which holds none; bands
-        // only the classes gen.py writes them for.
-        const bool held = name.rfind("ad102-", 0) == 0 || name.rfind("tu102-", 0) == 0 ||
-                          name.rfind("tu104-", 0) == 0 || name.rfind("tu106-", 0) == 0;
-        const bool has_ranked = std::regex_search(text, r, ranked_re);
-        if (!std::regex_search(text, m, pci_re) || has_ranked == held) {
-            failures += check(false, name + (held ? " names its board and has no ranked entry (a "
-                                                    "held chip, gen.py HELD_CHIPS)"
-                                                  : " names its board and has a ranked entry"));
+        // No file holds a ranked list (T 1-8 is the engine's analyzer, route_analyzer.cpp); every
+        // file names its board and holds bands.
+        if (!std::regex_search(text, m, pci_re) || std::regex_search(text, r, ranked_re)) {
+            failures += check(false, name + " names its board and holds no ranked list");
             continue;
         }
         const bool has_bands = std::regex_search(text, e, entry_re);
@@ -143,8 +138,7 @@ int shipped_picks() {
              it != std::sregex_iterator() && entry_count < 2; ++it) {
             ++entry_count;
         }
-        // The refusals below edit a ranked entry: a held chip's file has none.
-        if (!held && entry_count >= 2 && (first_name.empty() || name < first_name)) {
+        if (entry_count >= 2 && (first_name.empty() || name < first_name)) {
             first_name = name;
             first_text = text;
             first_id   = id;
@@ -155,11 +149,9 @@ int shipped_picks() {
                       << '\n';
             failures +=
                 check(s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
-                          s.predicted_entries > 0 &&
-                          (held ? s.ranked_entries == 0 : s.ranked_entries > 0) &&
-                          !s.predicted_sha256.empty(),
+                          s.predicted_entries > 0 && !s.predicted_sha256.empty(),
                       name + " is read as " + ninferno::device_class().id() +
-                          "'s predicted bands and ranked lists: " + s.message);
+                          "'s predicted bands: " + s.message);
             const auto problem_of = [](const std::smatch& x) {
                 return generic::Problem{
                     ninferno::find_route(x[1].str()).value_or(ninferno::QType::BF16),
@@ -169,21 +161,21 @@ int shipped_picks() {
                     : x[2].str() == "add"  ? generic::Epilogue::AddResidual
                                            : generic::Epilogue::Store};
             };
-            if (!held) {
-                // The first ranked entry's first width lists its first route first; none under
-                // the Legacy policy.
-                const auto pr     = problem_of(r);
-                const int width   = std::stoi(r[5].str());
-                const auto routes = generic::table_ranked_routes(pr, width);
-                failures +=
-                    check(ninferno::find_route(r[1].str()) && !routes.empty() &&
-                              generic::route_name(routes.front()) == r[6].str(),
-                          name + ": its first ranked entry lists " + r[6].str() + " first, not " +
-                              (routes.empty() ? std::string("none")
-                                              : generic::route_name(routes.front())));
+            if (has_bands) {
+                // The engine's analyzer answers the first entry's problem at T 1 on a board it
+                // does not hold; none under the Legacy policy (route_analyzer::device_routes).
+                const auto pr = problem_of(e);
+                bool held     = false;
+                for (const std::string_view c : ninferno::ops::route_analyzer::kHeldChips)
+                    held = held || ninferno::device_class().chip == c;
+                const auto routes = ninferno::ops::route_analyzer::device_routes(pr, 1);
+                failures += check(held == routes.empty(),
+                                  name + ": the analyzer " +
+                                      (held ? "answers a held chip" : "has no route at T 1"));
                 const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
-                failures += check(generic::table_ranked_routes(pr, width).empty(),
-                                  name + ": under --route-policy legacy no ranked list is read");
+                failures +=
+                    check(ninferno::ops::route_analyzer::device_routes(pr, 1).empty(),
+                          name + ": under --route-policy legacy the analyzer answers nothing");
             }
             if (!has_bands) continue;
             const auto q = ninferno::find_route(e[1].str());
@@ -275,23 +267,11 @@ int shipped_picks() {
             std::regex_replace(first_text, std::regex(R"re(\[\s*17,\s*32,)re"), R"re([17, 40,)re",
                                std::regex_constants::format_first_only));
         refused_with(
-            "with a ranked list past T 8",
-            // A list at T 9 ahead of the first entry's own (no overlap: the limit refuses it).
-            std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
-                               R"re("ranked": [[9, 9, ["rmma.m1.n1.w1x4"]], )re",
-                               std::regex_constants::format_first_only));
-        // At T 1 (not past T 8, which the limit refuses first): the refusal must be the empty
-        // list's.
-        refused_with("with an empty ranked list",
-                     std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
-                                        R"re("ranked": [[1, 1, []], )re",
-                                        std::regex_constants::format_first_only),
-                     "an empty ranked list");
-        refused_with("with a band triple's route where a list belongs",
-                     std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
-                                        R"re("ranked": [[1, 1, "rmma.m1.n1.w1x4"], )re",
-                                        std::regex_constants::format_first_only),
-                     "[t_min, t_max, [route, ...]]");
+            "with a ranked list (T 1-8 is the engine's analyzer)",
+            std::regex_replace(first_text, std::regex(R"re("bands": \[)re"),
+                               R"re("ranked": [[1, 1, ["rmma.m1.n1.w1x4"]]], "bands": [)re",
+                               std::regex_constants::format_first_only),
+            "a ranked list");
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a
@@ -431,6 +411,40 @@ int shipped_picks() {
         }
     }
     ninferno::ops::set_route_table_dir("");
+    // The engine's analyzer answers where the switch scored it and nowhere else (route_analyzer.h
+    // device_routes): a GA102 board, and one of an unknown PCI id priced from its driver values;
+    // not an sm_80 board, nor Volta (its HMMA authority answers), nor an A4 call.
+    {
+        const generic::Problem q4k_store{ninferno::QType::GGML_Q4_K,
+                                         ninferno::ops::LinearPolicy::A16Only, 4096, 4096,
+                                         generic::Epilogue::Store};
+        const auto routes_on = [&](std::uint32_t id, int major, int minor, int sms, double l2_mib,
+                                   bool driver_values, const generic::Problem& p) {
+            ninferno::DeviceClass d = ninferno::synthetic_device_class(
+                id, major, minor, sms, static_cast<std::size_t>(l2_mib * (1 << 20)), 0);
+            if (driver_values) {
+                d.sm_clock_khz     = 2'520'000;
+                d.memory_clock_khz = 10'501'000;
+                d.memory_bus_bits  = 192;
+            }
+            d.facts = ninferno::machine_facts_of(d);
+            const ninferno::ScopedDeviceClass scoped(d);
+            return ninferno::ops::route_analyzer::device_routes(p, 1);
+        };
+        failures += check(!routes_on(0x2204, 8, 6, 82, 6, false, q4k_store).empty(),
+                          "the analyzer answers a decode call on the RTX 3090");
+        failures += check(!routes_on(0, 8, 9, 60, 48, true, q4k_store).empty(),
+                          "the analyzer answers an unknown sm_89 board from its driver values");
+        failures += check(routes_on(0x20B0, 8, 0, 108, 40, false, q4k_store).empty(),
+                          "the analyzer does not answer an sm_80 board (A100)");
+        failures += check(routes_on(0x1DB1, 7, 0, 80, 6, false, q4k_store).empty(),
+                          "the analyzer does not answer Volta (its HMMA authority does)");
+        const generic::Problem nvfp4_a4{ninferno::QType::NVFP4,
+                                        ninferno::ops::LinearPolicy::AllowA4, 5120, 5120,
+                                        generic::Epilogue::Store};
+        failures += check(routes_on(0x2B85, 12, 0, 170, 96, false, nvfp4_a4).empty(),
+                          "the analyzer does not answer an A4 call (NVFP4 under AllowA4)");
+    }
     std::cout << files << " shipped predicted files; " << (failures == 0 ? "OK" : "FAIL")
               << " route_table shipped picks\n";
     return failures == 0 ? 0 : 1;

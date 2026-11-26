@@ -52,7 +52,9 @@
 // the description of the call the production path makes (generic::describe_call, #298): the route
 // asked and run, workspace, tile, logical traffic, prepared activation, the cost model's price and
 // the compiled kernel's resources on this board.
-// --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
+// --a8-candidates 1 admits and selects a GGUF block format, or a format with an R8 codec
+// (generic::r8_supports: q8_g32, the g64 / u4 zero-point / q3 formats, NVFP4 on a build without
+// the native NVFP4 kernels), under the default policy (AllowA8):
 // the W4A8 tiles, R8 and ggml's matrix and vector kernels (the vector one alone for IQ1_M) are
 // timed and priced at every width beside the A16 routes (--routes-out, --selected-out, whose rows
 // then say a8: the AllowA8 case they time), but the W4A8 tiles and R8 never make the table, its
@@ -143,9 +145,12 @@ generic::Epilogue parse_epilogue(const std::string& s) {
 }
 
 // Whether --a8-candidates sweeps the format under AllowA8: ggml's matrix kernel or its vector
-// kernel takes it (IQ1_M has the vector kernel only, so its vec rows need the sweep too).
+// kernel takes it (IQ1_M has the vector kernel only, so its vec rows need the sweep too), or it has
+// an R8 codec (generic::r8_supports; q8_g32 has neither ggml kernel, yet its decode takes R8 under
+// AllowA8, rules_r8: without the sweep no grid timed its R8 schedules, #1221).
 bool a8_sweep_format(QType qtype) {
-    return generic::ggml_mmq_format(qtype) || generic::ggml_vec_format(qtype);
+    return generic::ggml_mmq_format(qtype) || generic::ggml_vec_format(qtype) ||
+           generic::r8_supports(qtype);
 }
 
 std::vector<std::int32_t> decode_points() { return {1, 2, 3, 4, 5, 6, 7, 8, 12, 16}; }
@@ -335,8 +340,8 @@ int route_tune_main(int argc, char** argv) {
                 for (const auto t : wide_points()) points.push_back(t);
             }
             for (const Problem& p : problems) {
-                // The sweep's policy (a8_sweep below): an A16 GGUF block format under
-                // --a8-candidates runs AllowA8.
+                // The sweep's policy (a8_sweep below): an A16 line of a format a8_sweep_format
+                // admits runs AllowA8 under --a8-candidates.
                 const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
                                       a8_sweep_format(p.qtype);
                 const auto policy = p.compute == generic::ComputeClass::A4
@@ -403,10 +408,10 @@ int route_tune_main(int argc, char** argv) {
                     spare.push_back(random_weight(p.qtype, rows, p.k, 7U + p.n + p.k + 977U * c));
                 }
             }
-            // --a8-candidates 1: a GGUF block format keyed a16 is admitted and selected under the
-            // default policy (AllowA8), so the W4A8 tiles and ggml's matrix and vector kernels run
-            // beside the A16 routes at every width, with their prices; the table still takes A16
-            // winners.
+            // --a8-candidates 1: a format a8_sweep_format admits, keyed a16, is admitted and
+            // selected under the default policy (AllowA8), so the W4A8 tiles, R8 and ggml's matrix
+            // and vector kernels (where they take it) run beside the A16 routes at every width,
+            // with their prices; the table still takes A16 winners.
             const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
                                   a8_sweep_format(p.qtype);
             // An a8 sweep's rows (--routes-out, --selected-out) are the AllowA8 case they time:

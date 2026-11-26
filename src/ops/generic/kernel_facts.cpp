@@ -103,6 +103,9 @@ constexpr SectionFamily kSections[] = {
      .waits        = true,
      .inflight     = true},
     {"vecmma", "family type gated registers stack local shared", 0, 2},
+    {"vhmma", "family fmt E NG ahead registers stack local shared", 1, 3, true},
+    {"vgemv", "family fmt E NT registers stack local shared", 1, 2, true},
+    {"vgemvr", "family fmt E NT R registers stack local shared", 1, 3, true},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -500,6 +503,15 @@ std::vector<KernelFacts> rmma_rows(std::string_view arch) {
     if (const Snapshot* s = find(arch)) {
         v.reserve(s->rows.size());
         for (const auto& [key, facts] : s->rows) v.push_back(facts);
+    }
+    return v;
+}
+
+std::vector<std::string> rmma_row_keys(std::string_view arch) {
+    std::vector<std::string> v;
+    if (const Snapshot* s = find(arch)) {
+        v.reserve(s->rows.size());
+        for (const auto& [key, facts] : s->rows) v.push_back(key);
     }
     return v;
 }

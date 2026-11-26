@@ -4,6 +4,7 @@ set(ninferno_op_tests
   logit_softcap
   dense_fused
   gemma4_fused
+  inkling2
   gemma4_vision
   silu_mul
   residual_add

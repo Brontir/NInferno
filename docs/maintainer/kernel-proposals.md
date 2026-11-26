@@ -1085,3 +1085,79 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
     bound: mean KLD within 15 % of master's on the quick corpus.
 - **Decision.** Kept as a route that route_tune, coverage and the analyzer time and price. Not
   admitted by the selector until the A/B above (analyzer round 17, product change 2).
+
+### T. NVFP4 on Volta's HMMA kernel, the `HNV4` decoder (#1165, #1210): built before its entry
+- **Process breach, stated first.** The decoder was built before this entry existed (codex
+  review of #1210, AGENTS.md). Its prediction was written before the grids ran, but after the
+  code, so it is recorded here as the run's, not as a frozen proposal.
+- **Regime.** Decode and verify linears in NVFP4, T 1-16, sm_70 (Quadro GV100). Before this
+  change the dispatch took the register-MMA tile there. On sm_70 that tile multiplies on the
+  emulated BF16 MMA (`NINFERNO_FMA_MMA`: FP32 FMAs and shuffles, 551 SASS instructions a call), so
+  the call ran at 6-15x its bus time.
+- **Law.** Volta's HMMA kernel (`generic_volta_hmma.cu`) streams a weight once at the DRAM rate.
+  - Each code becomes an exact f16 operand of `mma.m8n8k4` once (twice the E2M1 value, HX4's
+    table), and the tensor cores multiply eight or sixteen token columns with it.
+  - So the time is the bytes term (k / 2 code bytes and k / 16 scale bytes a row), not issue.
+  - The block scale (half its E4M3 value) and the tensor divisor (`row_scale`) are applied in
+    FP32 after the group's sum, so no weight value is ever rounded to f16.
+- **Variant.** The `HNV4` fragment decoder:
+  - a quad-pair takes four 16-value blocks, 32 contiguous code bytes;
+  - their four scales are one aligned word;
+  - each set's divisor is applied on its own rows (gate and up of a stacked plane).
+- **Prediction (written 24.11, before the grids).** 3.5-6x faster than master on the release
+  NVFP4 shapes at T 1-16 (the bytes term against the emulated tile's measured time).
+- **Acceptance / refutation.** Acceptance: at least 2x on the release shapes in every band T 1,
+  T 2-4, T 5-8. Refutation: any band slower than master. Byte rule: token-invariant over 1-16
+  (byte-identical windows), and within one bf16 ulp of an FP64 reference of the reduced |w x|.
+- **A/B.** GV100, route_tune grids, branch against master, the best route a cell, summed per band.
+  - Release NVFP4 shapes (160 cells): 0.262 / 0.231 / 0.190 of master at T1 / T2-4 / T5-8, so
+    3.8-5.3x faster.
+  - Qwen3.5-9B calls (48 cells): 1.001 / 0.987 / 0.698. At T 1-4 those calls are best on other
+    routes, so they do not move.
+  - Accuracy: max 9e-05 at K 4096, 4e-05 at K 17408; the two-divisor SwiGLU check within the bound.
+- **Open.** Under AllowA8, `volta_hmma_route` leaves T 1-4 to R8 (W4a8Nvfp4 on dp4a), as for the
+  K-quants. That boundary (kVecRuleMaxTokens) was measured on the K-quants, not on NVFP4. The
+  R8-against-HMMA grid for NVFP4 at T 1-4 runs on the GV100 (cov nvr8gv), and its numbers go here.
+- **Decision.** Kept, on the HMMA route of the NVFP4 calls the dispatch takes it for.
+
+### U. The Inkling 2 family's own kernels (`src/ops/inkling2/inkling2.cu`, PR #1226): built before its entry
+- **Process breach, stated first.** The family's kernels were built and timed before this entry
+  existed (codex review of #1226, AGENTS.md). No time prediction was frozen before their first
+  measurement, so the numbers below are measurements, not an A/B against a prediction. What
+  this entry freezes is the next step's prediction and acceptance (below).
+- **Regime.** Inkling-2-Mini decode, T 1-8 a stream, C 1-8, on one card (RTX 4090 first). The
+  model has ops no other family has: the depth mix over at most 9 states, the loop controller,
+  the norm pair, the short convolution with dynamic taps, and attention with a relative bias
+  table and a sink. These are the new kernels: `depth_mix_sums_kernel` / `depth_mix_out_kernel`,
+  `control_kernel`, `norm_pair_kernel`, `conv_kernel`, `prepare_kernel`, `attention_kernel` /
+  `attention_join_kernel`. The linears and the experts are the generic and MoE paths (their
+  kernel facts and the analyzer), with one MoE epilogue added: `MoeActivation::Situ`.
+- **Law.** Every new kernel at decode reads at most a few KiB a token, except attention, so the
+  first form's time is the launch floor (a graph node, `launch_probe` node_ns) and one DRAM
+  latency a dependent load, not bytes.
+  - The depth mix as one block a token waited on its loads one after another over H (9.8 us a
+    call on the RTX 4090). Split into 9 blocks a token (kMixThreads channels a block), the loop
+    keeps 9 loads in flight, and the call falls to the floor of two launches.
+  - Attention reads the cached keys and values, 2 x D x 2 bytes a key a KV head, so its time is
+    those bytes / the bus once the key splits cover the SMs (flash decoding, twice the SMs, at
+    most kAttnMaxSplit splits). Below that, the time is one block's serial walk over its keys.
+- **Measured** (RTX 4090, Inkling-2-Mini UD-Q4_K_M, greedy, 256 tokens a stream, wall clock;
+  llama.cpp llama-server on the same GGUF, `-np 8`; PR #1226 comments):
+  - C 1 / 2 / 4 / 8: 109.6 / 179.9 / 280.7 / 412.7 tokens/s, against 79.1 / 129.4 / 170.9 /
+    252.4 for llama.cpp (+39 / +39 / +64 / +64 %);
+  - a 2949-token prompt: prefill 0.830 s against 1.425 s (1.72x); 128 decode tokens after it at
+    9.64 ms a token against 13.0 (+35 %).
+  - Not run: a per-kernel ABBA against a prediction. The kernels are new, and no master time
+    exists for them.
+- **Prediction, frozen 25.11 23:00 before the next speed step.** The packed projection (q,
+  gate, relative and sink from one input as one linear; k, v and taps as another; the analyzer's
+  sealed prices, `analyzer_r20/sealed_inkling2.json`) cuts a visit's seven attention
+  projections from ~44 us to 24-30 us on the RTX 4090. That saves 0.67-0.96 ms of a
+  ~9.1 ms token at C 1 (48 visits), +8 to +12 % decode.
+- **Acceptance / refutation, frozen with it.** Accept if the e2e A/B (ABBA, two runs) on the RTX
+  4090 gains at least +5 % at C 1 with C 2-8 not below -0.3 %. Below +2 % at C 1 in both runs
+  refutes the latency-bound reading of these calls. The byte rule is the KLD bound: mean KLD
+  within 15 % of the unpacked form's on the quick corpus.
+- **Decision.** The first form is kept, because it is exact, and because its numbers are
+  qualified against llama.cpp mainline (`docs/maintainer/inkling2-model.md`). The packed
+  projection waits for the A/B above.

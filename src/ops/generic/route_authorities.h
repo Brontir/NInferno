@@ -243,7 +243,7 @@ struct NamedAuthority {
 // its narrow fallbacks, the staged fallback and the scalar route, which always answers.
 [[nodiscard]] std::span<const NamedAuthority> rule_authorities() noexcept;
 
-// The analyzer authority's walk over a call's ranked list (table_ranked_routes): the first route
+// The analyzer authority's walk over a call's ranked list (route_analyzer::device_routes): the first route
 // the call's policy, profile and build admit. An R8 route of a decode call whose activation does
 // not fit one CTA (r8_call_refusal DecodeFit; analyzer.py refuses it too, r8_fits) is passed over,
 // so the list's next route answers rather than the resolver demoting R8 to heuristic_rmma (#1214).

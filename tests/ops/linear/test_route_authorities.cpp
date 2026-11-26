@@ -518,14 +518,14 @@ void check_known() {
         // the 4096x4096 store entry ad102.json lacks: borrowed, and under --route-policy evidence
         // (the default, #614 F2) demoted to the rules, the borrowed answer named
         {"rtx4090", q4k, big, a16, 512, true, 0, "tiled-rule", "demoted=route-table:borrowed"},
-        // AD102 is held out of the analyzer's ranked lists (gen.py HELD_CHIPS, #1211): its decode
+        // AD102 is held out of the analyzer (route_analyzer.h kHeldChips, #1211): its decode
         // calls keep the table and the rules
         {"rtx4090", q4k, own, a16, 1, false, 0, "route-table", "measured"},
         {"rtx4090", q4k, big, a16, 1, false, 0, "rmma-rule", "demoted=route-table:borrowed"},
-        // a decode call of a class routes/pick ranks: the analyzer's list, ahead of the table and
-        // the rules (analyzer_entry). gb202-170sm.json ranks this call at T 1 r8.w4r1, r8.w8r2,
-        // r8.w4r2, ggml_vec, rmma.m1.n1.w1x8 and at T 4 ggml_vec, rmma.m1.n1.w1x8: A16Only admits
-        // none of the A8 routes, so the walk takes the list's rmma; AllowA8 takes its head.
+        // a decode call on a board the analyzer prices: its ranked routes (route_analyzer.h
+        // device_routes), ahead of the table and the rules (analyzer_entry). The list leads with
+        // A8 routes at T 1 and T 4: A16Only admits none of them, so the walk takes the list's
+        // register MMA; AllowA8 takes its head.
         {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
         {"rtx5090", q4k, big, a16, 4, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
         {"rtx5090", q4k, big, LinearPolicy::AllowA8, 1, false, 0, "analyzer", "predicted",

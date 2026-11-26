@@ -9,6 +9,8 @@
 #include "models/dense/program_family.h"
 #include "models/gemma4/config.h"
 #include "models/gemma4/workspace.h"
+#include "models/inkling2/model.h"
+#include "models/inkling2/program_family.h"
 #include "models/load_options.h"
 #include "models/nemotron_h/model.h"
 #include "models/nemotron_h/program_family.h"
@@ -449,9 +451,10 @@ PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptio
             std::move(arenas.text_prefill_regions)};
 }
 
-// A dense decoder's or NemotronH's model described once for a directory and its activation
-// profile (Model::describe: the parameters load binds and prepares, without the payload), or why
-// it cannot be. `Family` the family's Model; a plan asks at every rung of every ladder.
+// A dense decoder's, NemotronH's or Inkling 2's model described once for a directory and its
+// activation profile (Inkling 2's load has one; it passes 0) (Model::describe: the parameters load
+// binds and prepares, without the payload), or why it cannot be. `Family` the family's Model; a
+// plan asks at every rung of every ladder.
 template <class Family, class Profile>
 std::shared_ptr<const Family>
 described_model(const std::shared_ptr<const artifact::Directory>& directory, Profile profile,
@@ -476,7 +479,11 @@ described_model(const std::shared_ptr<const artifact::Directory>& directory, Pro
     }
     Entry entry{directory, directory.get(), profile, nullptr, {}};
     try {
-        entry.model = Family::describe(*directory, profile);
+        if constexpr (std::is_same_v<Family, models::inkling2::Model>) {
+            entry.model = Family::describe(*directory); // one profile: its load has none
+        } else {
+            entry.model = Family::describe(*directory, profile);
+        }
     } catch (const std::exception& error) {
         entry.why = std::string("the start's weights need what the directory does not hold: ") +
                     error.what();
@@ -577,6 +584,62 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
     return {arenas.capacity, "the start's planner over the artifact's bindings"};
 }
 
+// Inkling 2's arena by the start's own planner (models/inkling2/program_family.h:
+// target_workspace_plan, which Inkling2Execution sizes its arena with) over the model the
+// artifact's directory describes, for the rung's sequence plan and the tokenizer's public ids,
+// under the start's route profile (the invariant routes under --activations exact). Equal to the
+// start's for the same device class.
+// Declines, and the formula stands, where the facts are not an artifact's, the tokenizer was not
+// read, no sequence plan is laid out, under an option the start refuses (refuse_qwen_only_options,
+// as load_inkling2 calls it first; speculation; Vision), under a --moe-path pin (its experts are
+// routed), where the tokenizer names more ids than the model's vocabulary (config.vocab_size, the
+// embedding rows the start's frontend checks against), where load would refuse the weights or a
+// binding needs the payload, and where no device class is known. (The start's BF16 MMA requirement
+// holds on every supported board: Turing's build composes it from f16 MMAs, Volta's emulates it in
+// FP32 FMAs; DeviceFeatures.)
+PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOptions& options,
+                                       const detail::SequencePlanImpl* plan) {
+    if (m.model_type != "inkling2_text") { return {}; }
+    if (!m.artifact_directory) {
+        return {std::nullopt,
+                "the start's weights are a converted artifact's bindings, not in these facts"};
+    }
+    if (m.tokenizer_tokens == 0) {
+        return {std::nullopt, "the tokenizer's public tokens were not read (the artifact's "
+                              "resources)"};
+    }
+    if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
+    try {
+        refuse_qwen_only_options(options, "Inkling 2");
+    } catch (const std::invalid_argument& error) {
+        return {std::nullopt, std::string("the start refuses it: ") + error.what()};
+    }
+    if (const char* pinned = route_override(options, true)) { return {std::nullopt, pinned}; }
+    if (options.speculative.backend != SpeculativeBackend::None) {
+        return {std::nullopt, "the start refuses it: Inkling 2 runs no speculative backend"};
+    }
+    if (options.enable_vision) {
+        return {std::nullopt, "the start refuses it: Inkling 2 artifacts carry no Vision encoder"};
+    }
+    try {
+        if (device_class().sms <= 0) { throw std::runtime_error("no multiprocessors"); }
+    } catch (const std::exception&) {
+        return {std::nullopt, "no device class to size the routes for"};
+    }
+    std::string why;
+    const auto model = described_model<models::inkling2::Model>(m.artifact_directory, 0, why);
+    if (!model) { return {std::nullopt, why}; }
+    const auto tokens = static_cast<std::int32_t>(m.tokenizer_tokens);
+    if (tokens > model->config().vocab_size) {
+        return {std::nullopt, "the tokenizer names more ids than the model's vocabulary (the start "
+                              "refuses)"};
+    }
+    const ops::ScopedInvariantRoutes routes(options.activations == ActivationMode::Exact);
+    const detail::WorkspacePlan arenas =
+        models::inkling2::target_workspace_plan(*model, tokens, *plan);
+    return {arenas.capacity, "the start's planner over the artifact's bindings"};
+}
+
 } // namespace
 
 void register_plan_workspace_queries() {
@@ -589,6 +652,9 @@ void register_plan_workspace_queries() {
             }
             if (hf_decoder_family(model.model_type)) {
                 return decoder_workspace(model, options, plan);
+            }
+            if (model.model_type == "inkling2_text") {
+                return inkling2_workspace(model, options, plan);
             }
             return qwen3_5_workspace(model, options, plan);
         } catch (const std::exception& error) {
@@ -606,7 +672,10 @@ void register_plan_workspace_queries() {
             const auto text       = directory.components.find("text");
             if (text == directory.components.end()) { return std::nullopt; }
             const std::string type = text->second.config.value("model_type", std::string());
-            if (hf_decoder_family(type)) { return hf_public_token_count(reader); }
+            // Inkling 2's start reads the HF text frontend too (inkling2_family.cpp).
+            if (hf_decoder_family(type) || type == "inkling2_text") {
+                return hf_public_token_count(reader);
+            }
             return models::qwen3_5::public_token_count(reader);
         } catch (const std::exception&) { return std::nullopt; }
     });

@@ -20,6 +20,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/linear/linear_registry.h"
 #include "ops/linear_add/q8/q8_linear_add_plan.h"
 #include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
@@ -518,17 +519,22 @@ int check_case(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, st
         route != nullptr ? *route : generic::select_route(problem, weight, t, false);
     const bool mmq_route =
         taken.family == generic::Family::GgmlMmq || taken.family == generic::Family::GgmlVec;
-    // The dispatch's route decides what it computes in: where ggml's kernels take a call the
-    // section expected A16 of (the R8 and W4A8 rules it models), x is quantized all the same.
-    if (mmq_route && route == nullptr && compute == ActivationCompute::A16 &&
-        policy != ops::LinearPolicy::A16Only) {
-        compute = ActivationCompute::A8;
-    }
-    // ... and where the cost model weighs an A16 tile faster than the int8 ones the section
-    // expected (AllowA8 permits int8, it does not require it), x stays BF16.
+    // The dispatch's route decides what it computes in: where it takes an int8 route the section
+    // expected A16 of, x is quantized all the same. That is ggml's kernels (the R8 and W4A8 rules
+    // they model) and any int8 route of the engine's analyzer, which answers any A16 shape at
+    // T 1-8 off the held boards (route_analyzer.h device_routes, #1227). Elsewhere an A16 section
+    // that lands on an int8 route stays a failure: the tables and rules it models changed.
+    // Where the dispatch weighs an A16 tile faster than the int8 ones the section expected
+    // (AllowA8 permits int8, it does not require it), x stays BF16.
     const bool a8_route = mmq_route || taken.family == generic::Family::W4a8Mma ||
                           taken.family == generic::Family::R8Mma ||
                           taken.family == generic::Family::I8Mma;
+    const bool analyzer_answers =
+        route == nullptr && !ops::route_analyzer::device_routes(problem, t).empty();
+    if (route == nullptr && compute == ActivationCompute::A16 &&
+        (mmq_route || (a8_route && analyzer_answers)) && policy != ops::LinearPolicy::A16Only) {
+        compute = ActivationCompute::A8;
+    }
     if (route == nullptr && compute == ActivationCompute::A8 && !a8_route) {
         compute = ActivationCompute::A16;
     }
@@ -1097,6 +1103,105 @@ int check_volta_hmma_accuracy(const Format& f, std::int32_t k, float mean, std::
     std::cerr << f.name << " Volta HMMA accuracy k=" << k << ": error " << worst
               << " of the reduced |w x| above one bf16 ulp\n";
     return 1;
+}
+
+// NVFP4 gate/up stacked from two separately quantized matrices (a checkpoint's weight_scale_2 per
+// projection): the HMMA epilogue scales each set by its own row's divisor (Decoder::row_scale),
+// the gate by the gate's and the up by the up's. Against FP64, each output's error stays within
+// one bf16 ulp of what it reduces (the gate's |w x| through SiLU's slope, the up's |w x|, the
+// output itself); the same check of the up taken with the gate's divisor fails on most outputs,
+// so the two divisors are told apart.
+int check_volta_hmma_two_divisors(std::int32_t k, std::uint32_t seed) {
+    const Format& f         = format_of(QType::NVFP4);
+    const std::int32_t rows = 128, t = 8;
+    const float divisor[2] = {12.0F, 28.0F};
+    const HostWeight host  = make_weight(f.qtype, 2 * rows, k, seed);
+    auto bytes             = host.packed.payload;
+    const std::size_t at   = (bytes.size() + 3) / 4 * 4;
+    bytes.resize(at + sizeof(divisor));
+    std::memcpy(bytes.data() + at, divisor, sizeof(divisor));
+    DeviceBuffer payload(bytes.size());
+    payload.copy_from_host(bytes.data(), bytes.size());
+    Weight weight              = host.packed.device_weight(payload.p);
+    weight.payload_bytes       = bytes.size();
+    weight.weight_divisors     = static_cast<const std::uint8_t*>(payload.p) + at;
+    weight.weight_divisor_rows = rows;
+    std::mt19937 rng(seed + 7U);
+    std::normal_distribution<float> normal(1.0F, 0.5F);
+    std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
+    for (auto& v : activation) v = f32_to_bf16(normal(rng));
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceBuffer out(static_cast<std::size_t>(rows) * t * 2);
+    cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+    DeviceArena workspace(256);
+    const generic::Problem problem{f.qtype, ops::LinearPolicy::A16Only, rows, k,
+                                   generic::Epilogue::SwiGlu};
+    const generic::Route route = generic::select_route(problem, weight, t, false);
+    if (route.family != generic::Family::RegisterMma) {
+        std::cerr << "nvfp4 Volta HMMA two divisors: T=8 not the register-MMA route\n";
+        return 1;
+    }
+    Tensor tx(x.p, DType::BF16, {k, t});
+    Tensor tout(out.p, DType::BF16, {rows, t});
+    generic::Call call;
+    call.x               = &tx;
+    call.weight          = &weight;
+    call.rows            = rows;
+    call.up_offset       = rows;
+    call.epilogue        = problem.epilogue;
+    call.out[0]          = &tout;
+    call.segment_rows[0] = rows;
+    generic::run_route(route, call, &workspace, nullptr);
+    cuda_check(cudaDeviceSynchronize(), "run");
+    const auto bits = download_bf16(out.p, static_cast<std::size_t>(rows) * t);
+    std::vector<std::int32_t> all(2 * rows);
+    std::iota(all.begin(), all.end(), 0);
+    // The fixture's rows carry its one tensor divisor: each set's own in its place.
+    const std::vector<float> w = weight_rows(host, all);
+    const double tensor        = host.packed.weight.weight_scale_divisor;
+    const auto silu            = [](double v) { return v / (1.0 + std::exp(-v)); };
+    double worst               = 0.0;
+    int wrong_fails            = 0;
+    for (std::int32_t token = 0; token < t; ++token)
+        for (std::int32_t r = 0; r < rows; ++r) {
+            double dot[2] = {0.0, 0.0}, reduced[2] = {0.0, 0.0};
+            for (int s = 0; s < 2; ++s) {
+                const std::size_t row = static_cast<std::size_t>(s * rows + r);
+                for (std::int32_t c = 0; c < k; ++c) {
+                    const double wx =
+                        static_cast<double>(w[row * k + c]) *
+                        bf16_to_f32(activation[static_cast<std::size_t>(token) * k + c]);
+                    dot[s] += wx;
+                    reduced[s] += std::fabs(wx);
+                }
+                dot[s] *= tensor / divisor[s];
+                reduced[s] *= tensor / divisor[s];
+            }
+            const double ref   = silu(dot[0]) * dot[1];
+            const double wrong = silu(dot[0]) * dot[1] * divisor[1] / divisor[0];
+            const double bound = (1.1 * reduced[0] * std::fabs(dot[1]) +
+                                  std::fabs(silu(dot[0])) * reduced[1] + std::fabs(ref)) /
+                                 256.0;
+            const double got = bf16_to_f32(bits[static_cast<std::size_t>(token) * rows + r]);
+            worst            = std::max(worst, std::fabs(got - ref) / std::max(bound, 1e-30));
+            wrong_fails += std::fabs(wrong - ref) > bound ? 1 : 0;
+        }
+    std::cout << "VOLTA_HMMA_TWO_DIVISORS k=" << k << " max=" << worst << " (of the bound), the "
+              << "gate's divisor on the up fails " << wrong_fails << " of " << rows * t << '\n';
+    int failures = 0;
+    if (worst > 1.0) {
+        std::cerr << "nvfp4 Volta HMMA two divisors k=" << k << ": error " << worst
+                  << " of the bound\n";
+        ++failures;
+    }
+    if (2 * wrong_fails < rows * t) {
+        std::cerr << "nvfp4 Volta HMMA two divisors k=" << k << ": the gate's divisor on the up "
+                  << "fails only " << wrong_fails << " of " << rows * t
+                  << ": the check is vacuous\n";
+        ++failures;
+    }
+    return failures;
 }
 
 // An R8 route: every token's output bytes equal those of the same token in a call of any other
@@ -2716,7 +2821,8 @@ int main() {
     if (!device_class().features.mma_tensor) {
         for (const Format& f : kFormats) {
             if (!on_build(f) || (f.qtype != QType::GGML_Q4_K && f.qtype != QType::GGML_Q5_K &&
-                                 f.qtype != QType::GGML_Q6_K && f.qtype != QType::Q8_G32_FP16)) {
+                                 f.qtype != QType::GGML_Q6_K && f.qtype != QType::Q8_G32_FP16 &&
+                                 f.qtype != QType::NVFP4)) {
                 continue;
             }
             for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
@@ -2731,8 +2837,9 @@ int main() {
                 failures += check_volta_hmma_accuracy(f, k, 1.0F, 87U);
                 failures += check_volta_hmma_accuracy(f, k, 0.0F, 89U);
             }
-            // Q8 rows of K % 256 != 0 (gpt-oss's 2880): the last superblock's quad-pairs past K.
-            if (f.qtype == QType::Q8_G32_FP16) {
+            // Q8 / NVFP4 rows of K % 256 != 0 (gpt-oss's 2880): the last superblock's quad-pairs
+            // past K.
+            if (f.qtype == QType::Q8_G32_FP16 || f.qtype == QType::NVFP4) {
                 failures += check_volta_hmma_invariance(f, Op::Linear, 72, 2880,
                                                         ops::LinearPolicy::A16Only, 91U);
                 failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 2880,
@@ -2740,6 +2847,8 @@ int main() {
                 failures += check_volta_hmma_accuracy(f, 2880, 1.0F, 95U);
                 failures += check_volta_hmma_accuracy(f, 2880, 0.0F, 97U);
             }
+            // NVFP4 gate/up of two divisors: each set's own on its rows.
+            if (f.qtype == QType::NVFP4) failures += check_volta_hmma_two_divisors(4096, 99U);
         }
     }
 

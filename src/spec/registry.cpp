@@ -212,6 +212,11 @@ std::string engine_for_architecture(std::string_view architecture) {
     }
     if (architecture.starts_with("Qwen3_5")) { return "qwen3_5"; }
     if (architecture == "NemotronHForCausalLM") { return "nemotron_h"; }
+    // Inkling 2: the converter takes both checkpoint classes (convert/inkling2.cpp).
+    if (architecture == "Inkling2LoopForCausalLM" ||
+        architecture == "Inkling2LoopForConditionalGeneration") {
+        return "inkling2";
+    }
     // The dense family: its converted artifacts (dense and MoE, any source), and the checkpoints
     // the registry names drafters for.
     if (architecture == "DenseDecoderForCausalLM" || architecture == "MoeDecoderForCausalLM" ||

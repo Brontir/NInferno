@@ -59,7 +59,7 @@ constexpr const char* kGated =
     "($HF_TOKEN, `hf auth login`, or the UI's settings)";
 
 // The engine families (spec::engine_for_architecture).
-constexpr const char* kEngines[] = {"qwen3_5", "gemma4", "nemotron_h", "dense"};
+constexpr const char* kEngines[] = {"qwen3_5", "gemma4", "nemotron_h", "dense", "inkling2"};
 
 Support refuse(std::string role, std::string reason) {
     return {Verdict::Unsupported, std::move(role), std::move(reason)};

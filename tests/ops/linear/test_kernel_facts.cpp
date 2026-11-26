@@ -379,9 +379,12 @@ void sections_read() {
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
         for (const auto family : kf::kSectionFamilies) {
-            const bool moe = family == "moer8" || family == "moegemm";
+            const bool moe   = family == "moer8" || family == "moegemm";
+            const bool volta = family == "vhmma" || family == "vgemv" || family == "vgemvr";
             const bool waived =
-                moe ? std::find(std::begin(kWithoutMoe), std::end(kWithoutMoe), arch) !=
+                volta ? arch != "70"
+                : moe
+                    ? std::find(std::begin(kWithoutMoe), std::end(kWithoutMoe), arch) !=
                           std::end(kWithoutMoe)
                     : family != "gemma4" && family != "r8" && family != "w4a8" && family != "vec" &&
                           std::find(std::begin(kWithoutSections), std::end(kWithoutSections),

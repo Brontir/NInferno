@@ -56,11 +56,15 @@ const std::vector<Field>& fields() {
         one("fp32_cycles_per_warp_instruction", "clk", &IsaRow::fp32_cycles_per_warp_instruction);
         by_warps("l1_latency", "clk", &IsaRow::l1_latency);
         by_warps("l2_latency", "clk", &IsaRow::l2_latency);
+        by_warps("l2_latency_ns", "ns", &IsaRow::l2_latency_ns);
         one("shared_latency", "clk", &IsaRow::shared_latency);
         by_warps("dram_latency", "clk", &IsaRow::dram_latency);
         by_warps("dram_tlbwarm_latency", "clk", &IsaRow::dram_tlbwarm_latency);
         by_warps("dram_tlbwarm_latency_ns", "ns", &IsaRow::dram_tlbwarm_latency_ns);
         one("l2_bytes_per_sm_clock", "byte", &IsaRow::l2_bytes_per_sm_clock);
+        one("l1_ldg32_cycles_per_sm", "clk", &IsaRow::l1_ldg32_cycles_per_sm);
+        one("lat_imad", "clk", &IsaRow::lat_imad);
+        one("lat_shfl", "clk", &IsaRow::lat_shfl);
         one("imma_wide_cycles_per_partition", "clk", &IsaRow::imma_wide_cycles_per_partition);
         one("imma_narrow_cycles_per_partition", "clk", &IsaRow::imma_narrow_cycles_per_partition);
         one("imma_wide_dependent_latency", "clk", &IsaRow::imma_wide_dependent_latency);
@@ -87,6 +91,30 @@ const std::vector<LaunchField>& launch_fields() {
         {"floor_ns_1024", &IsaLaunch::floor_ns_1024},
         {"floor_ns_4096", &IsaLaunch::floor_ns_4096},
     };
+    return all;
+}
+
+// A cluster fact: its name in the entry, its unit and the member it fills.
+struct ClusterField {
+    std::string name;
+    std::string unit;
+    IsaClusterSize IsaCluster::* size;
+    std::optional<double> IsaClusterSize::* member;
+};
+
+const std::vector<ClusterField>& cluster_fields() {
+    static const std::vector<ClusterField> all = [] {
+        std::vector<ClusterField> v;
+        for (const auto& [c, size] :
+             {std::pair{2, &IsaCluster::c2}, std::pair{8, &IsaCluster::c8}}) {
+            const std::string k = std::to_string(c);
+            v.push_back({"cluster_sync_ns_c" + k, "ns", size, &IsaClusterSize::sync_ns});
+            v.push_back({"cluster_rank_ns_c" + k + "_s1", "ns", size, &IsaClusterSize::rank_ns_s1});
+            v.push_back({"cluster_rank_ns_c" + k + "_s2", "ns", size, &IsaClusterSize::rank_ns_s2});
+            v.push_back({"cluster_slots_c" + k, "ctas", size, &IsaClusterSize::slots});
+        }
+        return v;
+    }();
     return all;
 }
 
@@ -172,6 +200,25 @@ IsaRow parse_row(const std::string& key, const Json& j) {
         }
         r.launch = std::move(launch);
     }
+    // The cluster entry (cluster_probe, sm_90+), alike.
+    if (const auto it = j.find("cluster"); it != j.end()) {
+        const Json& l = *it;
+        if (positive_int(l, "cc") != cc)
+            throw std::runtime_error("cluster: not a run of cc " + digits);
+        IsaCluster cluster;
+        cluster.card   = text(l, "card");
+        cluster.probe  = text(l.at("tool"), "probe");
+        cluster.sms    = positive_int(l, "sms");
+        const Json& cf = l.at("facts");
+        for (const ClusterField& f : cluster_fields()) {
+            try {
+                (cluster.*f.size).*f.member = fact_of(cf, f.name, f.unit);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("cluster: ") + e.what());
+            }
+        }
+        r.cluster = std::move(cluster);
+    }
     return r;
 }
 
@@ -220,6 +267,15 @@ std::span<const std::string> isa_launch_fact_names() {
     static const std::vector<std::string> names = [] {
         std::vector<std::string> v;
         for (const LaunchField& f : launch_fields()) v.push_back(f.name);
+        return v;
+    }();
+    return names;
+}
+
+std::span<const std::string> isa_cluster_fact_names() {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> v;
+        for (const ClusterField& f : cluster_fields()) v.push_back(f.name);
         return v;
     }();
     return names;

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """gen.py: routes/pick/<chip>-<sms>sm.json, two parts a board class.
 
-- `ranked` (T 1-8): analyzer.rank()'s route list a problem and width, cheapest first, which the engine's select
-  authority "analyzer" answers decode and verify calls by, ahead of the route tables and the rules (README "T 1-8").
-  A chip in HELD_CHIPS gets none.
+- T 1-8 is not written: the engine prices those calls itself (src/ops/generic/route_analyzer.cpp, the select
+  authority "analyzer"; README "T 1-8").
 - `bands` (T 9-16, and T 17-32 on sm_89, #785): the predicted route bands, for the board classes no route table was
   measured on, and for a tabled board, its table's gaps (#1068). The rest of this docstring is about them.
 
@@ -50,21 +49,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
-import analyzer  # noqa: E402
-import analyzer_facts  # noqa: E402
 import facts  # noqa: E402
 import pick  # noqa: E402
 
-# The decode and verify widths the analyzer (analyzer.py) ranks routes at, every class of ARCH_OF_CC (ranked_entries).
-RANK_LO, RANK_HI = 1, 8
-# The chips whose classes get no ranked lists yet (the Fable r21 gate: no card below -1 % e2e against master): AD102
-# (RTX 4090), whose rmma the analyzer prices 12-16 % below its time at T 2-4 (#1211; Qwen3.5-9B Q4_K_M -1.5 / -1.6 /
-# -3.0 % at C 2 / 3 / 4). Its calls keep the authorities after the analyzer until the DRAM side is priced from the
-# die's activation rate. TU102 / TU104 / TU106 (Turing, sm_75): the activation-ring (ahead) latency kernel that sm_75
-# launches for one-token-tile K-quant tiles is priced 1.2-1.3x its time and the plain w1x8 0.9x (RTX 2080 Ti, Q4_K SwiGLU
-# 12288 x 4096 T 4: w1x4 114.9 us priced 139.6, w1x8 139.7 priced 125.6), so the lists move SwiGLU to w1x8 (Qwen3.5-9B
-# Q4_K_M -1.3 / -0.75 / -9.9 % at C 1 / 2 / 4, #1183).
-HELD_CHIPS = ('ad102', 'tu102', 'tu104', 'tu106')
 LO, HI = 9, 16
 # The narrow band (#785): on these compute capabilities the file also holds T 17..NARROW_HI, which answers the int8
 # calls of those widths outside the prefill profile (speculative verify rounds, decode batches) ahead of the cost
@@ -195,20 +182,6 @@ def tabled_classes(F, all_tables):
     return out
 
 
-def all_classes(F):
-    """Every board class of an architecture in ARCH_OF_CC with its facts and tensor cores (not mma_slow), each by its
-    first desktop row, else its first row: the classes the analyzer's T 1-8 ranked lists are written for (no span or
-    carry limit: at T 1-8 the analyzer is the engine's first authority on every board it has a file for)."""
-    seen = {}
-    for row in F['rows']:
-        cc = int(row.get('cc', 0))
-        if cc not in ARCH_OF_CC or ARCH_OF_CC[cc] not in F['isa'] or row.get('mma_slow'):
-            continue
-        key = class_id(row)
-        if key not in seen or (row.get('form') == 'desktop' and seen[key].get('form') != 'desktop'):
-            seen[key] = row
-    return seen
-
 
 def problems(all_tables, cc, epilogues=WRITTEN_EPILOGUES, known=pick.BITS):
     out = {}
@@ -233,37 +206,11 @@ def runs(seq):
     return out
 
 
-def ranked_list(row, AF, shape):
-    """analyzer.rank's routes of one call, cut after the first register-MMA schedule: the engine takes the first route
-    its policy, profile and build admit (route_authorities.cpp analyzer_entry), and an A16 rmma schedule is admitted
-    under every policy, so no route past it is ever taken. Empty: no route priced."""
-    out = []
-    for r in analyzer.rank(row, AF, shape):
-        out.append(r)
-        if r.startswith('rmma.'):
-            break
-    return out
 
 
-def ranked_runs(row, AF, prob):
-    """[[t_min, t_max, [route, ...]], ...] over RANK_LO..RANK_HI, runs of equal lists; a width with no priced route is
-    left out (the engine's older authorities answer it)."""
-    fmt, ep, n, k = prob
-    out = []
-    for T in range(RANK_LO, RANK_HI + 1):
-        lst = ranked_list(row, AF, dict(format=fmt, epilogue=ep, n=n, k=k, T=T))
-        if not lst:
-            continue
-        if out and out[-1][2] == lst and out[-1][1] == T - 1:
-            out[-1][1] = T
-        else:
-            out.append([T, T, lst])
-    return out
-
-
-def overlay(row, F, probs, inputs, own=None, AF=None, rprobs=()):
+def overlay(row, F, probs, inputs, own=None):
     """The file of `probs`' bands, at the widths of LO..HI (LO..NARROW_HI on NARROW_CC) `own` ({problem: widths})
-    leaves, and of `rprobs`' ranked lists at T RANK_LO..RANK_HI (analyzer.py over `AF`). A problem pick.py cannot price
+    leaves. A problem pick.py cannot price
     at some width of LO..HI has no bands; past HI the bands stop at the first width it cannot price."""
     own = own or {}
     bands = {}
@@ -282,19 +229,16 @@ def overlay(row, F, probs, inputs, own=None, AF=None, rprobs=()):
             seq.append((T, r))
         if seq:
             bands[(fmt, ep, n, k)] = runs(seq)
-    ranked = {p: r for p, r in ((p, ranked_runs(row, AF, p)) for p in rprobs) if r}
     entries = []
-    for fmt, ep, n, k in sorted(set(bands) | set(ranked)):
+    for fmt, ep, n, k in sorted(bands):
         e = dict(format=fmt, compute='a16', epilogue=ep, n=n, k=k)
-        if (fmt, ep, n, k) in ranked:
-            e['ranked'] = ranked[(fmt, ep, n, k)]
         if (fmt, ep, n, k) in bands:
             e['bands'] = bands[(fmt, ep, n, k)]
         entries.append(e)
     return {
         'schema': SCHEMA,
         'gpu': {'class': class_id(row), 'board': row['name'], 'pci_id': row['id']},
-        'source': 'tools/route_pick/gen.py: analyzer.py (ranked, T 1-8) and pick.py (bands, T 9-32) over the facts '
+        'source': 'tools/route_pick/gen.py: pick.py (bands, T 9-32) over the facts '
                   'below, nothing measured on this card',
         'inputs': inputs,
         'entries': entries,
@@ -307,8 +251,8 @@ def inputs_of(root, F, arch):
     for p in [q for q in facts.input_paths(root, F) if not q.startswith(facts.KERNEL_FACTS) or q.endswith('/sm_%s.txt' % arch)]:
         with open(os.path.join(root, p), 'rb') as f:
             out[p] = hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
-    for p in ('tools/route_pick/analyzer.py', 'tools/route_pick/analyzer_facts.py', 'tools/route_pick/pick.py',
-              'tools/route_pick/facts.py', 'tools/route_pick/gen.py', pick.MMQ_HEADER.replace(os.sep, '/')):
+    for p in ('tools/route_pick/pick.py', 'tools/route_pick/facts.py', 'tools/route_pick/gen.py',
+              pick.MMQ_HEADER.replace(os.sep, '/')):
         with open(os.path.join(root, p), 'rb') as f:
             out[p] = hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
     return out
@@ -340,7 +284,6 @@ def main():
         if bad or not all(epilogues):
             sys.exit('--epilogues: %s is not one of %s' % (','.join(bad) or '(none)', ','.join(GAP_EPILOGUES)))
     F = facts.load_facts(a.root)
-    AF = analyzer_facts.load_facts(a.root)
     all_tables = tables(a.root, F)
     tabled = {chip for chip, _, _ in all_tables}
     if a.only:
@@ -356,9 +299,6 @@ def main():
             if k in want:
                 sys.exit('board class %s is both tabled and untabled' % k)
             want[k] = (row, GAP_EPILOGUES, own)
-        # Every other class gets the T 1-8 ranked lists alone (no bands: `None`).
-        for k, row in all_classes(F).items():
-            want.setdefault(k, (row, None, {}))
     out_dir = a.out or os.path.join(a.root, 'routes', 'pick')
     stale = []
     expected = set()
@@ -366,10 +306,7 @@ def main():
         full = frozenset(range(LO, (NARROW_HI if int(row['cc']) in NARROW_CC else HI) + 1))
         probs = [] if eps is None else [p for p in problems(all_tables, int(row['cc']), eps)
                                         if own.get(p, frozenset()) != full]
-        # The ranked lists answer every problem of the capability's tables at T 1-8, a tabled board's own included.
-        rprobs = () if row['chip'] in HELD_CHIPS else problems(all_tables, int(row['cc']), GAP_EPILOGUES,
-                                                                analyzer.BITS)
-        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own, AF, rprobs)
+        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own)
         if not doc['entries']:
             continue  # nothing priced for the class: no file
         name = key.replace(':', '-') + '.json'
