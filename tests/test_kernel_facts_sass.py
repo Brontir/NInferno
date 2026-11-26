@@ -1388,53 +1388,38 @@ class RegisterAllocations(unittest.TestCase):
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
         kernel_facts.render_section("moegemm", bare, "13.4.92")
 
-    def test_check_section_holds_one_allocation_exact(self):
-        import types
-        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
-                                     dump=None, show=10)
-        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
-        arch = sorted(table)[0]
-        key, counts = sorted(table[arch].items())[0]
-        lo = min(counts)
-        a, b = sc.LoopCounts(), sc.LoopCounts()
-        a.total, b.total = 1200, 1212
-        for with_sass, want in ((True, 1), (False, 0)):
-            with contextlib.redirect_stdout(io.StringIO()):
-                got = kernel_facts.check_section(
-                    args, "moegemm", {"rows": {key: (lo, 0, 0, 0, a)}, "nvcc": "13.4.92"},
-                    {key: (lo, 0, 0, 0, b)}, False, with_sass, arch)
-            self.assertEqual(got, want, with_sass)
-
     def test_two_schedules_at_one_count_pass_where_counted(self):
-        # #1226: sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 came out with two schedules at 77
-        # registers (SCHEDULES_AT_ONE_COUNT): another loop at that count passes check and keeps the
-        # section's row on extract; the same at a row not listed, at the row's other counted count
-        # (72), at a count not counted, or with another resource is still a failure.
+        # #1226: ptxas makes two schedules at one count of the counted rows too (sm_89
+        # GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77, sm_86 <6> 4 1 1 1 1 3 at 72): another loop at a
+        # counted count passes check on every counted row (it replaces the rule that held one count
+        # exact); the same at a row not counted, at a count not counted, or with another resource
+        # fails.
         import types
         args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
                                      dump=None, show=10)
-        key = ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)
-        self.assertEqual(kernel_facts.SCHEDULES_AT_ONE_COUNT["moegemm"]["89"][key], 77)
-        allowed = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]["89"][key]
-        self.assertIn(77, allowed)
-        other = next(r for r in allowed if r != 77)
         a, b = sc.LoopCounts(), sc.LoopCounts()
         a.total, b.total = 1086, 734
 
-        def check(k, at="89", regs=77, spill=0):
+        def check(k, at, regs, spill=0):
             section = {"rows": {k: (regs, 0, 0, 0, a)}, "nvcc": "13.4.92"}
             with contextlib.redirect_stdout(io.StringIO()):
                 return kernel_facts.check_section(args, "moegemm", section,
                                                   {k: (regs, spill, 0, 0, b)}, False, True, at)
 
-        self.assertEqual(check(key), 0)
-        self.assertEqual(check(key, regs=other), 1)
-        self.assertEqual(check(key, regs=max(allowed) + 1), 1)
-        self.assertEqual(check(key, spill=8), 1)
-        self.assertEqual(check(key, "86"), 1)
-        self.assertEqual(check(("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2)), 1)
-        old = {key: (77, 0, 0, 0, a)}
-        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, {key: (77, 0, 0, 0, b)}),
+        for at, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
+            for key, allowed in rows.items():
+                for regs in allowed:
+                    self.assertEqual(check(key, at, regs), 0, (at, key, regs))
+                self.assertEqual(check(key, at, max(allowed) + 1), 1, (at, key))
+                self.assertEqual(check(key, at, min(allowed), spill=8), 1, (at, key))
+        key = ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)
+        self.assertNotIn(key, kernel_facts.REGISTER_ALLOCATIONS["moegemm"].get("75", {}))
+        self.assertEqual(check(key, "75", 77), 1)
+        # extract --update writes the build's loop counts at one count (a source change reaches the
+        # section) and keeps the section's row at another counted count.
+        old, same = {key: (77, 0, 0, 0, a)}, {key: (77, 0, 0, 0, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, same), same)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, {key: (72, 0, 0, 0, b)}),
                          old)
 
     def test_a_section_of_other_columns_keeps_nothing(self):
