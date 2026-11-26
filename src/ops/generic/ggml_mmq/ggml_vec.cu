@@ -1257,7 +1257,8 @@ int vec_slots() {
 
 template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
 void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t stream) {
-    // lab #1236: NINFERNO_LAB_VEC_PERSM=N caps the persistent grid at N CTAs an SM (the rows-open test).
+    // lab #1236: NINFERNO_LAB_VEC_PERSM=N caps the persistent grid at N CTAs an SM (the rows-open
+    // test).
     static const int lab_persm = [] {
         const char* v = std::getenv("NINFERNO_LAB_VEC_PERSM");
         return v ? std::atoi(v) : 0;
