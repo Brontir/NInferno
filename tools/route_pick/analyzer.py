@@ -585,16 +585,27 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
     form, mode = P.get('VEC_FORM', 'h'), P.get('VEC_SM', 'iol')
     tot, stall, o_tot, o_stall, trips, ld, body = vec_counts(c, P, q, fmt, k, T)
     bw = bg / VEC_WARPS / (k / 1024.0)             # DRAM bytes a warp keeps in flight: a 1024-value slice of its rows
-    # The trip's waits on global loads beyond those its loads in flight cover (the slices it spans x ldg_peak): each a
-    # further round trip, served from L2 (the slice's rows are open: round 24, #1236; the T 6 / 7 gated instances wait
-    # 22-23 times a trip with 12-13 loads in flight, T 8 13 times with 16).
+    # The trip's waits on global loads beyond those its loads in flight cover (the slices it spans x ldg_peak): each
+    # re-reads a load's bytes (round 25, #1236; the T 6 / 7 gated instances wait 22-23 times a trip with 12-13 loads in
+    # flight, T 8 13 times with 16).
     excess = max(0.0, _num(q.get('sb_waits_global')) - max(_num(q.get('ldg_peak')), 1.0) * (k / 1024.0) / trips)
-    wait = trips * excess * c['l2lat_ns']
+    n_ld = _num(q.get('ldg')) + _num(q.get('ld'))
+    load_bytes = (_num(q.get('ldg_bytes')) + _num(q.get('ld_bytes'))) / max(n_ld, 1.0)
+    act = int(T) * k * 36.0 / 32.0                 # the q8_1 activation of the T tokens (36 B a 32-value block)
+    rb = k * bits / 8.0                            # a row's bytes, in 128-B L1 lines (one more where not line-aligned)
+    row_lines = (math.ceil(rb / 128.0) + (1.0 if rb % 128.0 else 0.0)) * 128.0
 
     def rnd(nc):
         d = nc * bg / bus
         cps = math.ceil(nc / c['sms'])
-        sm = sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, k / 1024.0, bw, ld, 1.0, extra=wait)
+        sm = sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, k / 1024.0, bw, ld, 1.0)
+        # The SM's L2 link (l2_bytes_per_sm_clock) carries every resident warp's trip bytes and, where the rows its
+        # CTAs keep open and the activation exceed L1, the re-reads: the share of them past the bytes the SM keeps in
+        # flight at a linear rate (ring_free) queues there.
+        opn = (cps * bg / rb) * row_lines
+        reread = excess * load_bytes if opn + act > c['l1'] else 0.0
+        reread *= max(0.0, 1.0 - c['ring_free'] / (cps * VEC_WARPS * bw))
+        sm = max(sm, cps * VEC_WARPS * trips * (bw * (k / 1024.0) / trips + reread) / (c['l2bpc'] * c['clk']))
         return math.hypot(sm, d) if form == 'h' else sm + d if form == 's' else max(sm, d)
 
     return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + l0 + (rounds - 1) * rnd(ctas) + rnd(last)

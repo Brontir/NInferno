@@ -83,6 +83,9 @@ def load_facts(root):
         w4 = val(fa.get('l2_latency_w4')) if fa.get('l2_latency_w4') is not None else None
         d['l2trip'] = w4 if w4 is not None else val(fa.get('l2_latency_w1'))
         d['fill'] = val(rf['warp_fill_bytes_per_clock']) if 'warp_fill_bytes_per_clock' in rf else None
+        # The bytes an SM keeps in flight while its load rate still grows linearly with warps (warp_inflight ring2, free
+        # placement): the share of a vec trip's re-reads beyond it queues on the SM's L2 link (price_vec, round 25).
+        d['ring_free'] = val(rf.get('ring2_linear_to_w_free', 0)) * val(rf.get('ring2_b_w_w1_free', 0))
         lsms = a.get('launch', {}).get('sms')
         d['stream'] = val(la['stream_ns']) if 'stream_ns' in la else None
         d['floor'] = sorted((n, val(la[k])) for n, k in ((1, 'floor_ns_1'), (lsms, 'floor_ns_sms'), (4 * lsms if lsms else None, 'floor_ns_4sms'),

@@ -263,6 +263,7 @@ std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns) 
     c.hmma     = *isa->mma_cycles_per_partition;
     c.lat      = *isa->lat_imad;
     c.fill     = *rate->warp_fill_bytes_per_clock;
+    c.ring_free = rate->ring2_linear_to_w_free * rate->ring2_b_w_w1_free;
     c.l1lat    = *isa->l1_latency.w1;
     c.l2lat_ns = *isa->l2_latency_ns.w1;
     c.int_cyc  = *isa->int32_cycles_per_warp_instruction;
@@ -810,17 +811,29 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
     }
     const double bw = bg / kVecWarps / (k / 1024.0);
     // The trip's waits on global loads beyond those its loads in flight cover (the slices it
-    // spans x ldg_peak): each a further round trip, served from L2 (round 24, #1236: the T 6 / 7
-    // gated instances wait 22-23 times a trip with 12-13 loads in flight, T 8 13 times with 16).
+    // spans x ldg_peak): each re-reads a load's bytes (round 25, #1236; the T 6 / 7 gated
+    // instances wait 22-23 times a trip with 12-13 loads in flight, T 8 13 times with 16).
     const double peak = std::max(pipe(r, &PipeCounts::ldg_peak), 1.0);
     const double excess =
         std::max(0.0, pipe(r, &PipeCounts::sb_waits_global) - peak * slices / trips);
-    const double wait = trips * excess * c.l2lat_ns;
-    const auto rnd  = [&](double nc) {
+    const double n_ld = loop_i(r, &LoopCounts::ldg) + loop_i(r, &LoopCounts::ld);
+    const double load_bytes =
+        (loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes)) / std::max(n_ld, 1.0);
+    const double act = static_cast<double>(T) * k * 36.0 / 32.0; // the q8_1 activation
+    const double rb  = k * bits / 8.0; // a row's bytes in 128-B L1 lines, one more where unaligned
+    const double row_lines = (std::ceil(rb / 128.0) + (std::fmod(rb, 128.0) != 0.0 ? 1.0 : 0.0)) * 128.0;
+    const auto rnd = [&](double nc) {
         const double d   = nc * bg / c.bus;
         const double cps = std::ceil(nc / c.sms);
-        const double sm  = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot,
-                                     o_stall, trips, cps, k / 1024.0, bw, ld, kVecWarps, wait);
+        double sm        = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot,
+                                   o_stall, trips, cps, k / 1024.0, bw, ld, kVecWarps, 0.0);
+        // The SM's L2 link carries every resident warp's trip bytes and, where the rows its CTAs
+        // keep open and the activation exceed L1, the re-reads: the share of them past the bytes
+        // the SM keeps in flight at a linear rate (ring_free) queues there.
+        const double opn = cps * bg / rb * row_lines;
+        double reread    = opn + act > c.l1 ? excess * load_bytes : 0.0;
+        reread *= std::max(0.0, 1.0 - c.ring_free / (cps * kVecWarps * bw));
+        sm = std::max(sm, cps * kVecWarps * trips * (bw * slices / trips + reread) / (c.l2bpc * c.clk));
         return combine(s.vec_form, sm, d);
     };
     return launch_ns(c, s, L->ctas) + launch_ns(c, s, std::ceil(k / 256.0) * T) +

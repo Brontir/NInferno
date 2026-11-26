@@ -88,6 +88,7 @@ struct Card {
     double l0 = 0, node = 0, mma_lat = 0, hmma = 0, lat = 0, fill = 0, l1lat = 0, l2lat_ns = 0;
     double int_cyc = 0, fp_cyc = 0, shfl = 0, smem_lat = 0, l1cyc = 0, l2bpc = 0, dramlat = 0;
     double l2trip = 0;
+    double ring_free = 0; // bytes an SM keeps in flight at a linear rate (warp_inflight ring2)
     std::optional<double> stream, imma_n, imma_w;
     bool pdl = false;
     std::vector<std::pair<double, double>> floor; // (CTAs, ns), sorted
