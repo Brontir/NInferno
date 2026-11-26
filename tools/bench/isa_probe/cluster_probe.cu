@@ -59,6 +59,7 @@ constexpr int kPlainPerSm    = 4; // the slots CTA: a plain launch holds four an
 constexpr long long kSpinNs  = 20000;
 constexpr double kRoundShare = 0.15;
 constexpr int kSizes[]       = {2, 8}; // the product's cluster sizes (generic_gemm_launch.cuh)
+constexpr long long kWarmNs  = 200'000'000; // the hold before each cluster size's timings
 
 __device__ __forceinline__ unsigned long long gtime() {
     unsigned long long t;
@@ -66,14 +67,32 @@ __device__ __forceinline__ unsigned long long gtime() {
     return t;
 }
 
-__global__ void syncs(int n, unsigned long long* out) {
+// The hold: FFMAs on every SM until `ns` after each CTA started, so the timings that follow run
+// at the working clock (launch_probe.cu's).
+__global__ void hold(long long ns, float* sink) {
+    const unsigned long long end = gtime() + ns;
+    float x                      = threadIdx.x * 1e-3f;
+    do {
+#pragma unroll
+        for (int i = 0; i < 256; ++i) x = fmaf(x, 0.999f, 0.001f);
+    } while (gtime() < end);
+    if (x == 12345.f) sink[0] = x;
+}
+
+// The syncs; `mhz` gets rank 0's SM clock over them (clock64 / %globaltimer), for the note.
+__global__ void syncs(int n, unsigned long long* out, double* mhz) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
     cg::cluster_group cl = cg::this_cluster();
     cl.sync();
     const unsigned long long t0 = gtime();
+    const long long c0          = clock64();
     for (int i = 0; i < n; ++i) cl.sync();
+    const long long c1          = clock64();
     const unsigned long long t1 = gtime();
-    if (threadIdx.x == 0 && cl.block_rank() == 0) out[blockIdx.x / cl.num_blocks()] = t1 - t0;
+    if (threadIdx.x == 0 && cl.block_rank() == 0) {
+        out[blockIdx.x / cl.num_blocks()] = t1 - t0;
+        mhz[blockIdx.x / cl.num_blocks()] = 1e3 * static_cast<double>(c1 - c0) / (t1 - t0);
+    }
 #endif
 }
 
@@ -162,23 +181,27 @@ cudaLaunchConfig_t config(int C, int ctas, int threads, size_t smem, cudaLaunchA
     return cfg;
 }
 
-// The median over the clusters of one launch of `kernel`, in ns; the median over kRepeats.
-template <typename K, typename... Args>
-double timed(int C, K kernel, unsigned long long* d, Args... args) {
+// One cluster.sync() of C-CTA clusters in ns: the median over the clusters of one launch of
+// kSyncs syncs, the median over kRepeats launches (the first one dropped); `mhz` the SM clock
+// rank 0 saw over them, the median likewise.
+double sync_ns(int C, unsigned long long* d, double* dm, double* mhz) {
     cudaLaunchAttribute a[1];
     cudaLaunchConfig_t cfg = config(C, kClusters * C, kThreads, 0, a);
-    std::vector<double> meds;
+    std::vector<double> meds, clocks;
     std::vector<unsigned long long> h(kClusters);
+    std::vector<double> hm(kClusters);
     for (int r = 0; r <= kRepeats; ++r) {
-        CHECK(cudaLaunchKernelEx(&cfg, kernel, args..., d));
+        CHECK(cudaLaunchKernelEx(&cfg, syncs, kSyncs, d, dm));
         CHECK(cudaDeviceSynchronize());
         CHECK(cudaMemcpy(h.data(), d, kClusters * sizeof(unsigned long long),
                          cudaMemcpyDeviceToHost));
-        if (r == 0) continue; // the first launch warms the module and the clocks
-        std::vector<double> v(h.begin(), h.end());
-        meds.push_back(median(v));
+        CHECK(cudaMemcpy(hm.data(), dm, kClusters * sizeof(double), cudaMemcpyDeviceToHost));
+        if (r == 0) continue; // the first launch warms the module
+        meds.push_back(median(std::vector<double>(h.begin(), h.end())));
+        clocks.push_back(median(hm));
     }
-    return median(meds);
+    *mhz = median(clocks);
+    return median(meds) / kSyncs;
 }
 
 template <int S>
@@ -255,6 +278,8 @@ int main() {
         unsigned long long* d = nullptr;
         float* sink           = nullptr;
         CHECK(cudaMalloc(&d, kClusters * sizeof(unsigned long long)));
+        double* dm = nullptr;
+        CHECK(cudaMalloc(&dm, kClusters * sizeof(double)));
         CHECK(cudaMalloc(&sink, 4096 * sizeof(float)));
         CHECK(cudaFuncSetAttribute(syncs, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
         CHECK(cudaFuncSetAttribute(reduce<1>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
@@ -274,7 +299,13 @@ int main() {
                     "on a plain launch (%d)\n",
                     kThreads, smem, plain, plain * sms);
         for (const int C : kSizes) {
-            const double sync = timed(C, syncs, d, kSyncs) / kSyncs;
+            hold<<<sms * kPlainPerSm, kThreads>>>(kWarmNs, sink);
+            CHECK(cudaGetLastError());
+            double mhz        = 0.0;
+            const double sync = sync_ns(C, d, dm, &mhz);
+            std::printf("note cluster_sync_ns_c%d: the SM clock over the syncs %.0f MHz (clock64 / "
+                        "%%globaltimer, rank 0), after a %lld ms hold\n",
+                        C, mhz, kWarmNs / 1000000);
             std::printf("fact cluster_sync_ns_c%d %.3f ns\n", C, sync);
             const double r1 = rank_ns<1>(C, sync, d, sink), r2 = rank_ns<2>(C, sync, d, sink);
             check(r1 > 0 && r2 > 0, "a rank read of C " + std::to_string(C) + " is not positive");
@@ -301,6 +332,7 @@ int main() {
             }
         }
         CHECK(cudaFree(d));
+        CHECK(cudaFree(dm));
         CHECK(cudaFree(sink));
     }
     if (g_failures.empty()) {
