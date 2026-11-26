@@ -245,6 +245,23 @@ class LoopFinder(unittest.TestCase):
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
         self.assertIsNone(sc.switch_targets(body, i))
         self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
+        # tail_reached follows successors' edges: a callee's branch with a predicate operand, a
+        # guarded RET and BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
+        # code after an unguarded KILL is entered by nothing.
+        callee = [(0x500, "BRA.U !UP0, 0x520 ;"), (0x510, "FADD R36, R36, R30 ;"),
+                  (0x520, "@P1 RET.REL.NODEC R20 0x0 ;"), (0x530, "@!P5 BRA.DIV 0x550 ;"),
+                  (0x540, "RET.REL.NODEC R20 0x0 ;"), (0x550, "RET.REL.NODEC R20 0x0 ;"),
+                  (0x560, "BRA 0x560 ;"), (0x570, "NOP ;"), (0x580, "NOP ;")]
+        tail = [l for l in lines if l[0] < 0x500] + callee
+        body = body_of(tail)
+        last = max(k for k, x in enumerate(body) if x[2] == "EXIT" and not x[1])
+        self.assertTrue(sc.tail_reached(body, last))
+        killed = [l for l in lines if l[0] < 0x500] + [
+            (0x500, "MUFU.RCP R36, R36 ;"), (0x510, "KILL ;"),
+            (0x520, "FADD R36, R36, R30 ;"), (0x530, "BRA 0x420 ;")]
+        body = body_of(killed)
+        last = max(k for k, x in enumerate(body) if x[2] == "EXIT" and not x[1])
+        self.assertFalse(sc.tail_reached(body, last))
         # A switch before the K loop (the loop's back edge among its targets): unknown flow.
         early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
         body = body_of(early)

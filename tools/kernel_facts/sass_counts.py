@@ -370,7 +370,10 @@ def tail_reached(body, last_exit):
         reached = reached or offset in explicit
         if not reached and opcode != "NOP":
             return False
-        if opcode in ("EXIT", "BRA", "JMP", "RET") and not guarded:
+        if opcode in ("BRA", "JMP"):
+            # successors' fall-through: a guard, a predicate operand (BRA.U !UP0), BRA.DIV
+            reached = reached and branch_edges(guarded, body[k][2], body[k][3])[1]
+        elif opcode.startswith(("BRX", "JMX")) or (opcode in ("EXIT", "RET", "KILL") and not guarded):
             reached = False
     return True
 
