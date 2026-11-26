@@ -1177,6 +1177,18 @@ void run(const Call& call, LinearPolicy policy, WorkspaceArena* workspace, cudaS
         workspace_free_route(select_route(problem, *call.weight, call.x->ne[1], prefill_routes_active()),
                              problem, *call.weight, call.x->ne[1], prefill_routes_active(),
                              workspace != nullptr);
+    // Lab (route-count): every call with its token count and route, for the e2e-weighted grid exam.
+    static const char* count_path = std::getenv("NINFERNO_ROUTE_COUNT");
+    if (count_path != nullptr && *count_path != 0) {
+        static std::mutex count_mutex;
+        std::lock_guard lock(count_mutex);
+        std::ofstream(count_path, std::ios::app)
+            << qtype_name(problem.qtype) << ' '
+            << compute_class_name(compute_class(problem.qtype, policy)) << ' '
+            << epilogue_name(call.epilogue) << ' ' << call.rows << ' ' << call.weight->k << ' '
+            << call.x->ne[1] << ' ' << route_name(route) << '
+';
+    }
     run_route(route, call, workspace, stream, released);
 }
 
