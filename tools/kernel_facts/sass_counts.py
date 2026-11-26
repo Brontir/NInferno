@@ -351,13 +351,38 @@ def branch_edges(guarded, opcode, operands):
     return True, conditional
 
 
+def tail_reached(body, last_exit):
+    """Whether every instruction after the function's last unconditional EXIT (index `last_exit`)
+    is entered by an explicit edge: the target of a BRA / JMP / CALL anywhere in the function, or
+    the fall-through of a reached instruction there. A jump-table case placed after that EXIT
+    would be entered only by the table, so switch_targets would leave it out of the counts
+    silently (#1231); such an instruction makes the flow unknown instead. NOPs (the closing
+    padding) are exempt."""
+    explicit = set()
+    for _, _, opcode, operands, *_ in body:
+        if base_opcode(opcode) in ("BRA", "JMP", "CALL"):
+            m = TARGET.search(operands)
+            if m:
+                explicit.add(int(m.group(1), 16))
+    reached = False
+    for k in range(last_exit + 1, len(body)):
+        offset, guarded, opcode = body[k][0], body[k][1], base_opcode(body[k][2])
+        reached = reached or offset in explicit
+        if not reached and opcode != "NOP":
+            return False
+        if opcode in ("EXIT", "BRA", "JMP", "RET") and not guarded:
+            reached = False
+    return True
+
+
 def switch_targets(body, i):
     """The possible targets of the indirect branch at `i`, a compiled switch (sm_100 / sm_120a
     compile one so, e.g. the routed expert kernels' epilogue): the jump table is in a constant
     bank, so its entries are not read, and the targets are over-approximated by every instruction
     after the branch, up to the reconvergence point R of the BSSY that opens its region where one
     stands within eight instructions before it (BSSY Bn, R), else to the function's last
-    unconditional EXIT (its end where no such EXIT follows). All
+    unconditional EXIT (its end where no such EXIT follows; None where code after that EXIT is
+    entered by no explicit edge, tail_reached, #1231). All
     forward: no edge back, so no loop is made, and a loop the branch sits outside of is counted as
     before. None (unknown flow, the counts left empty) where no instruction follows, or where a
     branch among the targets jumps back (a loop entered from the switch could lose its header's
@@ -379,6 +404,8 @@ def switch_targets(body, i):
                  if base_opcode(body[k][2]) == "EXIT" and not body[k][1]]
         if exits:
             end = body[exits[-1]][0]
+            if not tail_reached(body, exits[-1]):
+                return None
     targets = [k for k in range(i + 1, len(body)) if end is None or body[k][0] <= end]
     for k in targets:
         if base_opcode(body[k][2]) in ("BRA", "JMP"):
