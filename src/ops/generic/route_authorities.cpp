@@ -131,7 +131,7 @@ std::optional<RouteAnswer> analyzer_entry(const Ask& ask, const Problem& problem
                                           const Weight& weight) {
     if (ask.prefill()) return std::nullopt;
     const std::vector<Route> ranked = route_analyzer::device_routes(problem, ask.tokens);
-    const auto r = analyzer_walk(ranked, ask, problem, weight);
+    const auto r                    = analyzer_walk(ranked, ask, problem, weight);
     if (!r) return std::nullopt;
     Evidence e;
     e.kind     = Evidence::Kind::Predicted;
