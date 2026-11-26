@@ -10,6 +10,7 @@
 #include "core/weight_view.h"
 #include "ninferno/ops/route_table.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/op_tester.h"
@@ -167,9 +168,15 @@ int main() {
     const auto dir    = std::filesystem::temp_directory_path() / "ninferno_decision_routes";
     std::filesystem::create_directories(dir);
     const auto path = dir / "moved.json";
+    // Where the engine's analyzer answers the board (route_analyzer.h device_routes: T 1-8 of any
+    // shape, ahead of a table), the table moves the slice's verify widths, T 9-16; elsewhere its
+    // decode width 4 as well.
+    const generic::Problem q8_call{QType::Q8_G32_FP16, LinearPolicy::A16Only, 1024, 4096,
+                                   Epilogue::Store};
+    const std::int32_t width = ops::route_analyzer::device_routes(q8_call, 4).empty() ? 4 : 12;
     std::string moved;
     for (const char* route : {"rmma.m1.n1.w2x2", "rmma.m1.n1.w1x4"}) {
-        if (route_at(before.at(q8_key), 4) != route) {
+        if (route_at(before.at(q8_key), width) != route) {
             moved = route;
             break;
         }
@@ -185,7 +192,7 @@ int main() {
     ops::clear_route_table();
     // Without tensor mma.sync (Volta) the HMMA route takes Q8's decode widths before a table.
     if (device_class().features.mma_tensor) {
-        check(q8_key.starts_with("q8 ") && route_at(after.at(q8_key), 4) == moved &&
+        check(q8_key.starts_with("q8 ") && route_at(after.at(q8_key), width) == moved &&
                   after.at(q8_key) != before.at(q8_key),
               "the moved table moves the Q8 slice's line: " + after.at(q8_key));
     }

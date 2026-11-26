@@ -15,6 +15,7 @@
 #include "ninferno/ops/route_table.h"
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
@@ -402,6 +403,16 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
     const auto similar = device_class().similar_chips();
     if (similar.empty()) {
         std::cout << "demoted retime: SKIP, no similar chip of this architecture lends a table\n";
+        return 0;
+    }
+    // Where the engine's analyzer answers the board's decode widths (route_analyzer.h
+    // device_routes: ahead of a table and of the tuner, #1227), no lent decode band is demoted and
+    // retimed there: the fixture is the held chips' (RTX 4090, 4060 Ti, 3060 among the stands).
+    if (!ops::route_analyzer::device_routes(
+             {QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560, 2048, generic::Epilogue::Store},
+             4)
+             .empty()) {
+        std::cout << "demoted retime: SKIP, the engine's analyzer answers this board's decode\n";
         return 0;
     }
     int failures    = 0;

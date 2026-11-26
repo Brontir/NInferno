@@ -518,17 +518,18 @@ int check_case(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, st
         route != nullptr ? *route : generic::select_route(problem, weight, t, false);
     const bool mmq_route =
         taken.family == generic::Family::GgmlMmq || taken.family == generic::Family::GgmlVec;
-    // The dispatch's route decides what it computes in: where ggml's kernels take a call the
-    // section expected A16 of (the R8 and W4A8 rules it models), x is quantized all the same.
-    if (mmq_route && route == nullptr && compute == ActivationCompute::A16 &&
-        policy != ops::LinearPolicy::A16Only) {
-        compute = ActivationCompute::A8;
-    }
-    // ... and where the cost model weighs an A16 tile faster than the int8 ones the section
-    // expected (AllowA8 permits int8, it does not require it), x stays BF16.
+    // The dispatch's route decides what it computes in, both ways: where it takes an int8 route
+    // the section expected A16 of (ggml's kernels for the R8 and W4A8 rules they model, or the
+    // engine's analyzer, which answers any A16 shape at T 1-8 off the held boards with R8 where it
+    // prices it faster), x is quantized all the same; where it weighs an A16 tile faster than the
+    // int8 ones the section expected (AllowA8 permits int8, it does not require it), x stays BF16.
     const bool a8_route = mmq_route || taken.family == generic::Family::W4a8Mma ||
                           taken.family == generic::Family::R8Mma ||
                           taken.family == generic::Family::I8Mma;
+    if (route == nullptr && compute == ActivationCompute::A16 && a8_route &&
+        policy != ops::LinearPolicy::A16Only) {
+        compute = ActivationCompute::A8;
+    }
     if (route == nullptr && compute == ActivationCompute::A8 && !a8_route) {
         compute = ActivationCompute::A16;
     }

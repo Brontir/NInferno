@@ -11,6 +11,7 @@
 
 #include "core/arena.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/linear/linear_test_common.h"
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
@@ -187,6 +188,7 @@ int main() {
     int failures = 0, paired = 0, invariant = 0, matrix_paired = 0;
     for (const auto& p : pairs) {
         int pair_paired = 0;
+        bool analyzer_answers = false; // the engine's analyzer prices a narrow call of this pair
         for (const auto& [rows, k] : std::vector<std::pair<std::int32_t, std::int32_t>>{
                  {640, 5120}, {336, 2560}, {200, 1280}, {128, 2880}}) {
             // K 2880 (gpt-oss): whole blocks of the 32-value formats only.
@@ -217,6 +219,11 @@ int main() {
                     failures += prefill.failures;
                 }
                 for (const std::int32_t t : {1, 2, 3, 4, 5, 6, 7}) {
+                    analyzer_answers = analyzer_answers || !ops::route_analyzer::device_routes(
+                                                                {p.gate, ops::LinearPolicy::AllowA8,
+                                                                 rows, k, generic::Epilogue::Store},
+                                                                t)
+                                                                .empty();
                     const Result narrow = check(p, rows, k, t, gelu, seed);
                     failures += narrow.failures;
                     paired += narrow.paired ? 1 : 0;
@@ -237,8 +244,14 @@ int main() {
                 }
             }
         }
-        // The tuner may route a width elsewhere, never every width of every shape.
-        if (pair_paired == 0) {
+        // The tuner may route a width elsewhere, never every width of every shape. Where the
+        // engine's analyzer answers the narrow widths (route_analyzer.h device_routes: the board
+        // classes the switch scored), it alone decides them (#1227), and may price the vector
+        // kernel out of every one: the pair's arithmetic is still checked wherever it is taken.
+        if (pair_paired == 0 && analyzer_answers) {
+            std::cout << "segmented swiglu: " << name(p.gate) << "/" << name(p.up)
+                      << ": the analyzer routes every narrow width off the vector pair\n";
+        } else if (pair_paired == 0) {
             std::cerr << "FAIL " << name(p.gate) << "/" << name(p.up)
                       << ": never took the vector pair\n";
             ++failures;
