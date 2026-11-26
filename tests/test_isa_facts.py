@@ -1171,5 +1171,101 @@ class LaunchFacts(unittest.TestCase):
                     self.assertIn("node_pdl_ns", entry["facts"], where)
 
 
+# The committed cluster run of sm_120a (#1228) and its ISA row: the cluster section's fixtures.
+def _committed(name):
+    with open(os.path.join(ip.DEFAULT_INPUTS, name)) as f:
+        return f.read()
+
+
+def _on_5070ti(text):
+    """A cluster run as one of an RTX 5070 Ti (70 SMs): a transfer check's fixture."""
+    return (text.replace("card NVIDIA GeForce RTX 5090", "card NVIDIA GeForce RTX 5070 Ti")
+            .replace("sms 170\n", "sms 70\n"))
+
+
+class ClusterFacts(unittest.TestCase):
+    def setUp(self):
+        self.run = _committed("cluster_probe_120a.txt")
+        self.isa = _committed("isa_probe_120a.txt")
+
+    def test_committed_run(self):
+        head, facts = ip.parse_section_run(ip.CLUSTER, self.run)
+        self.assertIs(ip.section_of_run(self.run), ip.CLUSTER)
+        self.assertEqual(list(facts), list(ip.CLUSTER_FACTS))
+        for name, (unit, low, high) in ip.CLUSTER_FACTS.items():
+            self.assertEqual(facts[name]["unit"], unit, name)
+            self.assertTrue(low <= facts[name]["value"] <= high, name)
+        self.assertEqual(head["probe"], ip.checked_in_section(ip.CLUSTER))
+
+    def test_refused(self):
+        slots = next(l for l in self.run.splitlines() if l.startswith("fact cluster_slots_c8 "))
+        sync = next(l for l in self.run.splitlines() if l.startswith("fact cluster_sync_ns_c2 "))
+        for old, new, why in (
+                (slots, slots.replace(" ctas", " ns"), "is in ctas, not ns"),
+                (slots + "\n", "", "missing cluster_slots_c8"),
+                (sync, sync.replace(sync.split()[2], "1e7"), "outside the probe's"),
+                (sync, sync + "\n" + sync, "given twice"),
+                ("selfcheck ok", "selfcheck FAIL no cluster of 8 fits", "self-check failed"),
+                ("cc 120\n", "cc 89\n", "built for sm_120a, not sm_89")):
+            self.assertIn(old, self.run, why)
+            with self.assertRaises(ValueError) as e:
+                ip.parse_section_run(ip.CLUSTER, self.run.replace(old, new, 1))
+            self.assertIn(why, str(e.exception))
+        below = self.run.replace("cc 120\n", "cc 89\n").replace("arch sm_120a\n", "arch sm_89\n")
+        with self.assertRaises(ValueError) as e:
+            ip.parse_section_run(ip.CLUSTER, below)
+        self.assertIn("cluster facts start at cc 90, not 89", str(e.exception))
+
+    def table_in(self, d, files):
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w", newline="\n") as f:
+                f.write(text)
+        return ip.build_table(d)
+
+    def test_in_the_table(self):
+        check = _on_5070ti(self.run)
+        with tempfile.TemporaryDirectory() as d:
+            row = self.table_in(d, {"isa_probe_120a.txt": self.isa,
+                                    "cluster_probe_120a.txt": self.run,
+                                    "cluster_probe_120a_rtx5070ti.txt": check})["arches"]["120a"]
+            want = ip.section_entry(ip.CLUSTER, *ip.parse_section_run(ip.CLUSTER, self.run),
+                                    "cluster_probe_120a.txt")
+            want["checks"] = [ip.section_entry(ip.CLUSTER, *ip.parse_section_run(ip.CLUSTER, check),
+                                               "cluster_probe_120a_rtx5070ti.txt")]
+            self.assertEqual(row["cluster"], want)
+            self.assertNotIn("launch", row)
+        for files, why in (
+                ({"cluster_probe_120a.txt": self.run}, "has no ISA row to carry its cluster facts"),
+                ({"isa_probe_120a.txt": self.isa, "cluster_probe_120a_rtx5070ti.txt": check},
+                 "which has no cluster row"),
+                ({"isa_probe_120a.txt": self.isa, "cluster_probe_120a.txt": self.run,
+                  "cluster_probe_120a_rtx5090.txt": self.run}, "the row's own card")):
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(ValueError) as e:
+                    self.table_in(d, files)
+                self.assertIn(why, str(e.exception), list(files))
+
+    def test_merge_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            inputs = os.path.join(d, "inputs")
+            os.mkdir(inputs)
+            for name, text in (("isa_probe_120a.txt", self.isa),
+                               ("cluster_probe_120a.txt", self.run)):
+                with open(os.path.join(inputs, name), "w", newline="\n") as f:
+                    f.write(text)
+            run = os.path.join(d, "run.txt")
+            with open(run, "w", newline="\n") as f:
+                f.write(_on_5070ti(self.run))
+            args = argparse.Namespace(input=run, inputs=inputs, table=os.path.join(d, "t.json"),
+                                      check=True, other_card=False)
+            with contextlib.redirect_stderr(io.StringIO()), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ip.cmd_merge(args), 0)
+            self.assertIn("cluster_probe_120a_rtx5070ti.txt", os.listdir(inputs))
+            with open(args.table) as f:
+                cl = json.load(f)["arches"]["120a"]["cluster"]
+            self.assertEqual([c["card"] for c in cl["checks"]], ["NVIDIA GeForce RTX 5070 Ti"])
+
+
 if __name__ == "__main__":
     unittest.main()

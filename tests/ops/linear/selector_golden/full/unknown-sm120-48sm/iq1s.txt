@@ -24,7 +24,8 @@ iq1s p0 add 256x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 iq1s p0 add 256x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 iq1s p0 add 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 iq1s p0 add 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-iq1s p0 swiglu 128x2048 speed T=1..16 rmma.m1.n1.w1x8.c8 ws=0
+iq1s p0 swiglu 128x2048 speed T=1..8 rmma.m1.n1.w1x8.c2 ws=0
+iq1s p0 swiglu 128x2048 speed T=9..16 rmma.m1.n1.w1x8.c8 ws=0
 iq1s p0 swiglu 128x2048 speed T=17..48 rmma.m1.n1.w1x8 ws=0
 iq1s p0 swiglu 128x2048 speed T=64..128 rmma.m1.n1.w1x4 ws=0
 iq1s p0 swiglu 128x2048 speed T=192 rmma.m1.n2.w1x4 ws=0

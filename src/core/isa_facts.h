@@ -4,7 +4,8 @@
 // it (tools/bench/isa_probe/, its rows in core/data/isa_facts.json, compiled in). The tensor pipe's
 // rate and cycles per MMA, the dependent MMA latency, the INT32 / FP32 cycles per warp instruction,
 // and the dependent L1 / L2 / shared / DRAM load latencies alone and under 2, 4, 8 chasing warps
-// per SM; and, in a row's launch entry, the launch facts of the launch probe (IsaLaunch below). A
+// per SM; in a row's launch entry, the launch facts of the launch probe (IsaLaunch below), and in
+// its cluster entry the cluster facts of the cluster probe (IsaCluster, sm_90+). A
 // cost law reads these instead of a constant; nothing in the engine reads them yet (#613).
 //
 // A fact the row does not carry is unknown (an empty optional), never a default number: a row of
@@ -54,6 +55,34 @@ struct IsaLaunch {
     // the call of an empty grid of that size, so floor_ns_C - floor_ns_1 is the CTA dispatch
     // ramp. floor_ns_4096 from launch_probe 2 on (#886): unknown on a row an older probe measured.
     std::optional<double> floor_ns_1, floor_ns_sms, floor_ns_4sms, floor_ns_1024, floor_ns_4096;
+};
+
+// The cluster facts of an architecture (#1228, sm_90+), measured by the cluster probe
+// (tools/bench/isa_probe/cluster_probe.cu, a probe of its own) on one card of it, the row's
+// "cluster" entry, at each cluster size of the register-MMA K split (the rmma cN schedules, C 2
+// and 8): what the cN epilogue's reduce and the cluster launch cost. Each fact is unknown where
+// the entry lacks it, and the whole entry is absent where the architecture has no cluster run
+// (below sm_90 there are no clusters).
+struct IsaClusterSize {
+    std::optional<double> sync_ns;    // one cluster.sync() of C 256-thread CTAs, in ns
+    std::optional<double> rank_ns_s1; // rank 0's read of one other rank's partial of one weight
+                                      // set (one warp, 512 B), in ns
+    std::optional<double> rank_ns_s2; // the same of two sets (SwiGLU's gate and up), in ns
+    std::optional<double> slots;      // the CTAs a launch of C-CTA clusters holds at once (a
+                                      // cluster lives in one GPC), for a CTA a plain launch
+                                      // holds four of an SM
+};
+
+struct IsaCluster {
+    std::string card;  // the card the cluster probe ran on
+    std::string probe; // "cluster_probe 1"
+    int sms = 0;       // that card's SMs
+    IsaClusterSize c2, c8;
+
+    // The facts of cluster size C, nullptr for a size the probe does not measure.
+    [[nodiscard]] const IsaClusterSize* size(int C) const {
+        return C == 2 ? &c2 : C == 8 ? &c8 : nullptr;
+    }
 };
 
 // One architecture's row of the ISA facts table.
@@ -116,6 +145,8 @@ struct IsaRow {
     // The launch facts, nullopt where the architecture has no launch run (core/launch_facts.h
     // reads them as seconds).
     std::optional<IsaLaunch> launch;
+    // The cluster facts, nullopt where the architecture has no cluster run (sm_90+ only).
+    std::optional<IsaCluster> cluster;
 };
 
 // The table, parsed once from the embedded JSON. Throws std::runtime_error when the embedded text
@@ -136,5 +167,9 @@ struct IsaRow {
 // The names of the launch facts the reader takes from a row's "launch" entry ("node_ns"), all in
 // ns.
 [[nodiscard]] std::span<const std::string> isa_launch_fact_names();
+
+// The names of the cluster facts the reader takes from a row's "cluster" entry
+// ("cluster_sync_ns_c2"), in the order of IsaCluster's members.
+[[nodiscard]] std::span<const std::string> isa_cluster_fact_names();
 
 } // namespace ninferno

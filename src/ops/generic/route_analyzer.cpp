@@ -292,6 +292,14 @@ std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns) 
     c.nr_cap  = nr->cap;
     c.nr_wf   = nr->wf;
     c.nr_bank = nr->bank;
+    if (isa->cluster && isa->cluster->sms > 0) {
+        for (const int C : {2, 8}) {
+            const IsaClusterSize* f = isa->cluster->size(C);
+            if (!f || !f->sync_ns || !f->rank_ns_s1 || !f->rank_ns_s2 || !f->slots) continue;
+            (C == 2 ? c.cluster2 : c.cluster8) = Card::ClusterSize{
+                *f->sync_ns, *f->rank_ns_s1, *f->rank_ns_s2, *f->slots / isa->cluster->sms};
+        }
+    }
     return c;
 }
 
@@ -351,7 +359,15 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     const double passes   = std::ceil(T / (8.0 * N));
     const double rows_cta = 16.0 * M * A, warps = A * B;
     const double ctas  = std::ceil(n / rows_cta) * passes * C;
-    const double occ   = occupancy(c, warps, r.registers);
+    // A launch of C-CTA clusters holds fewer CTAs than a plain one (a cluster lives in one GPC; 2
+    // an SM on GB20x whatever the threads): the cluster facts' slots an SM over this board's SMs,
+    // in whole clusters (the nearest: the RTX 5090's 328 CTAs at C 8 give the RTX 5070 Ti 17
+    // clusters, 136 CTAs, as its own launch holds), as CTAs an SM (#1228, #1234).
+    const Card::ClusterSize* cl = C > 1 ? c.cluster(C) : nullptr;
+    const double whole =
+        cl ? C * std::max(1.0, std::floor(cl->slots_sm * sms / C + 0.5)) / sms : 0.0;
+    const double occ =
+        cl ? std::min(occupancy(c, warps, r.registers), whole) : occupancy(c, warps, r.registers);
     const double kiter = loop_i(r, &LoopCounts::k_iter), slots = sms * occ;
     const double trips = k / (B * C * kiter);
     const double nfull = std::floor(ctas / slots);
@@ -360,7 +376,10 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     const double share =
         passes > 1 ? std::min(std::max((slots - cp) / std::max(ctas - cp, 1e-9), 0.0), 1.0) : 1.0;
     const double bcta  = n * pitch * (1.0 + (passes - 1.0) * (1.0 - share)) / ctas;
-    const double out   = c.lat * sched(r, &StaticSchedule::outside_stall) / clk;
+    // The cN epilogue (generic_gemm.cuh): two cluster.sync() and rank 0's reads of the C - 1
+    // other ranks' partials, one rank after another (#pragma unroll 1), of `sets` weight sets.
+    const double out = c.lat * sched(r, &StaticSchedule::outside_stall) / clk +
+                       (cl ? 2.0 * cl->sync + (C - 1) * (sets > 1.5 ? cl->rank2 : cl->rank1) : 0.0);
     const double red   = (passes - 1.0) / passes;
     const double steps = 2.0 - (A * B <= 8 && latency_row ? 1.0 : 0.0);
     const double bw    = loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes) +
@@ -990,7 +1009,8 @@ std::optional<double> price(const Card& c, const Call& call, std::string_view ro
             if (vk != VoltaKind::None)
                 return volta_sub_price(c, s, n, k, T, bits, sets, call.qtype, ep, vk);
         }
-        if (m->C > 1 && c.cc < 90) return std::nullopt;
+        // Clusters are sm_90+, and a cN schedule is priced from its cluster facts.
+        if (m->C > 1 && (c.cc < 90 || c.cluster(m->C) == nullptr)) return std::nullopt;
         const std::string dec = rmma_decoder(call.qtype, ik);
         if (dec.empty()) return std::nullopt;
         auto r = rmma_row(c, dec, m->A, m->B, m->M, m->N, m->C, ep, false);

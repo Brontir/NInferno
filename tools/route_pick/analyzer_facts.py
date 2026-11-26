@@ -12,6 +12,7 @@ vec, vecmma, and on sm_70 the Volta substitutes vhmma / vgemv / vgemvr).
 NARROW below holds the narrow-load facts per arch (probe narrow.cu, #1183) until they are in isa_facts.json.
 """
 import json
+import math
 import os
 import re
 
@@ -88,6 +89,29 @@ def load_facts(root):
                                                          (1024, 'floor_ns_1024'), (4096, 'floor_ns_4096')) if n and k in la)
         if arch in NARROW:
             d['nr'] = dict(zip(('cap', 'wf', 'bank'), NARROW[arch]))
+        # The cluster facts (sm_90+, isa_probe's cluster section, #1228), by cluster size: one cluster.sync(), rank 0's
+        # read of one other rank's partial of 1 / 2 weight sets (ns), and the CTAs a launch of C-CTA clusters holds an SM
+        # (the probe card's slots over its SMs). A size without all four is not there (its schedules are not priced).
+        ca = a.get('cluster')
+        if ca:
+            # The same checks as the engine's reader (isa_facts.cpp): a run of the row's cc, every value a positive number.
+            if int(ca['cc']) != int(a['cc']):
+                raise ValueError('isa facts sm_%s: the cluster entry is a run of cc %s' % (arch, ca['cc']))
+            cf, d['cluster'] = ca.get('facts', {}), {}
+            if not isinstance(ca.get('sms'), int) or isinstance(ca['sms'], bool) or ca['sms'] <= 0:
+                raise ValueError('isa facts sm_%s: the cluster entry sms is not a positive count' % arch)
+            for n, v in cf.items():
+                x = v.get('value')
+                if isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) or not x > 0:
+                    raise ValueError('isa facts sm_%s: cluster fact %s is not a positive number' % (arch, n))
+                if v.get('unit') != ('ctas' if n.startswith('cluster_slots_') else 'ns'):
+                    raise ValueError('isa facts sm_%s: cluster fact %s is in %s' % (arch, n, v.get('unit')))
+            for C in (2, 8):
+                names = ('cluster_sync_ns_c%d' % C, 'cluster_rank_ns_c%d_s1' % C, 'cluster_rank_ns_c%d_s2' % C,
+                         'cluster_slots_c%d' % C)
+                if all(n in cf for n in names):
+                    sync, r1, r2, slots = (val(cf[n]) for n in names)
+                    d['cluster'][C] = dict(sync=sync, rank={1: r1, 2: r2}, slots_sm=slots / float(ca['sms']))
         if any(d.get(f) is None for f in REQUIRED) or len(d['floor']) < 2:
             continue
         F['isa'][arch] = d

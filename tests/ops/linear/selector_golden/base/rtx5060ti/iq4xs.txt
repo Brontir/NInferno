@@ -87,7 +87,7 @@ iq4xs p1 swiglu 128x2048 speed T=2 ggml_vec ws=4608
 iq4xs p1 swiglu 128x2048 speed T=3 ggml_vec ws=6912
 iq4xs p1 swiglu 128x2048 speed T=4 ggml_vec ws=9216
 iq4xs p1 swiglu 128x2048 speed T=5 ggml_vec ws=11520
-iq4xs p1 swiglu 128x2048 speed T=8 rmma.m1.n1.w1x16 ws=0
+iq4xs p1 swiglu 128x2048 speed T=8 ggml_vec ws=18432
 iq4xs p1 swiglu 128x2048 speed T=9..16 ggml_mmq ws=0
 iq4xs p1 swiglu 128x2048 speed T=17..32 rmma.m1.n1.w1x8 ws=0
 iq4xs p1 swiglu 128x2048 speed T=48..64 rmma.m1.n1.w1x4 ws=0
