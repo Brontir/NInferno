@@ -954,10 +954,11 @@ int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     return 0;
 }
 
-// Whether run_route hands this call to Volta's HMMA kernel (its RegisterMma case: volta_hmma_takes
-// on the call's args) and not to the emulated register-MMA tile. That tile is also accurate,
-// token-invariant and applies both divisors, so the checks below alone cannot tell the two apart
-// (#1216).
+// Whether the call passes volta_hmma_takes, the HMMA gate in run_route's RegisterMma case, with the
+// args the dispatch builds; a necessary condition for Volta's HMMA kernel over the emulated
+// register-MMA tile (it does not repeat resolve_route's demotions, which keep this test's shapes on
+// RegisterMma). That tile is also accurate, token-invariant and applies both divisors, so the
+// checks below alone cannot tell the two apart (#1216).
 bool volta_hmma_runs(const Weight& w, const void* x, std::int32_t tokens) {
     generic::GemmArgs args = generic::weight_args(w);
     args.x                 = x;
