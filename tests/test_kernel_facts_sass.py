@@ -677,6 +677,31 @@ TAIL_WORDS = {0x160: BAR_WORD, 0x190: high_word(1, write=0), 0x1a0: high_word(1,
               0x240: high_word(1, write=0)}
 
 
+class OutsidePath(unittest.TestCase):
+    """r59 lab outside_path: the heaviest acyclic outside path a warp runs, pre to the loop, post to an exit."""
+
+    def test_one_side_of_each_branch(self):
+        # 0 -> {1 light, 2 heavy} -> 3 (loop header, 3 <-> 4) -> 5 -> {6 one-warp epilogue, 7 exit}; 6 -> 7.
+        # 8: an outside loop after the epilogue's start (6 -> 8 -> 8 back edge, 8 -> 7).
+        edges = [[1, 2], [3], [3], [4, 5], [3], [6, 7], [8], [], [8, 7]]
+        live = set(range(9))
+        dom, preds = sc.dominators(edges, live)
+        w = {0: (2, 1), 1: (1, 1), 2: (9, 3), 3: (5, 1), 4: (5, 1), 5: (1, 1), 6: (20, 4), 7: (1, 1), 8: (3, 2)}
+        pre, post = sc.outside_path(edges, dom, live, {3, 4}, lambda b: w[b])
+        self.assertEqual(pre, (2 + 9, 1 + 3))                 # the entry and the heavy side, not both sides
+        self.assertEqual(post, (1 + 20 + 3 + 1, 1 + 4 + 2 + 1))  # through the epilogue, its loop once, to the exit
+
+    def test_cold_edge_skipped_unless_alone(self):
+        edges = [[1], [1, 2, 3], [3], []]
+        live = set(range(4))
+        dom, _ = sc.dominators(edges, live)
+        w = {0: (1, 1), 1: (0, 0), 2: (50, 5), 3: (2, 1)}
+        _, post = sc.outside_path(edges, dom, live, {1}, lambda b: w[b], cold=frozenset({(1, 2)}))
+        self.assertEqual(post, (2, 1))
+        _, post = sc.outside_path(edges, dom, live, {1}, lambda b: w[b])
+        self.assertEqual(post, (52, 6))
+
+
 class Tail(unittest.TestCase):
     """The code after the K loop by who runs it (sass_counts.TAIL_FIELDS, lab round 30): the
     K-split reduce and the epilogue's store sites."""
@@ -723,7 +748,8 @@ class Tail(unittest.TestCase):
                          (0,) * len(sc.TAIL_FIELDS))
         # The last two are global_waits' counts (the r8 rows' columns of the same names).
         self.assertEqual(sc.TAIL_FIELDS[8:], ("glb_waits", "outside_glb_waits", "ldg_edge", "ldg_edge_bytes",
-                                              "ldg_edge_stall"))
+                                              "ldg_edge_stall", "opath_pre_total", "opath_pre_stall",
+                                              "opath_post_total", "opath_post_stall", "opath_post_stg"))
         waits = {0x100: LDG_SETS_SB2, 0x110: HMMA_WAITS_SB2}
         self.assertEqual(sc.loop_counts(body_of(TAIL, waits)).glb_waits, 1)
 

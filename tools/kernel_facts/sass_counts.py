@@ -168,7 +168,14 @@ LOOP_COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELD
 # r8 rows already carry): the DRAM round trips a K trip of this arch's SASS really exposes.
 TAIL_FIELDS = ("post_total", "post_stall", "red_lds", "red_total", "red_stall", "epi_total",
                "epi_stall", "epi_stg", "glb_waits", "outside_glb_waits", "ldg_edge", "ldg_edge_bytes",
-               "ldg_edge_stall")
+               "ldg_edge_stall", "opath_pre_total", "opath_pre_stall", "opath_post_total",
+               "opath_post_stall", "opath_post_stg")
+# (r59, lab) opath_*: the code outside the K loop ONE warp runs, as the heaviest (stall clocks, then instructions) acyclic
+# path of the outside blocks (outside_path): pre from the entry to the K loop, post from the loop to an exit (and its global
+# stores, the token store sites that warp runs at T 8). outside_total
+# counts every alternative (both sides of a branch, every guarded site, the emulation a converged warp skips); a warp runs
+# one path, the CTA's slowest warp the heaviest one. A BRA.CONV's fall-through (cold_edges) is not taken unless it is the
+# block's only edge.
 # (r58, lab) ldg_edge*: the global loads a lane keeps in flight ACROSS the K loop's back edge (loads_over_back_edge),
 # their bytes and the static stall clocks they fly: the software prefetch that lets a trip's chain overlap its bytes.
 
@@ -529,6 +536,76 @@ def natural_loops(edges, dom, preds, live):
                 members.add(b)
                 stack.extend(preds[b])
     return loops
+
+
+def cold_edges(body, blocks):
+    """The edges (block, successor) a converged warp does not take: a BRA.CONV's fall-through (PR 1242's form)."""
+    starts = {s: b for b, (s, _) in enumerate(blocks)}
+    return frozenset((b, starts[e + 1]) for b, (_, e) in enumerate(blocks)
+                     if body[e][2].startswith("BRA.CONV") and e + 1 in starts)
+
+
+def outside_path(edges, dom, live, members, weight, cold=frozenset()):
+    """(pre, post): the heaviest acyclic paths of the blocks outside the loop `members` (r59 lab), pre from the entry to
+    an edge into the loop, post from an edge out of the loop to a block without successors; each a tuple summed of
+    `weight(block)`. Back edges of other loops are dropped (an outside loop is walked once); a cold edge is taken only
+    where it is the block's only edge. (0, 0)-tuples where the entry is in the loop or nothing leaves it."""
+    zero = tuple(0 for _ in weight(next(iter(live))))
+
+    def add(a, b):
+        return tuple(x + y for x, y in zip(a, b))
+
+    def succ(b):
+        out = [t for t in edges[b] if t in live and not is_back_edge(dom, b, t)]
+        warm = [t for t in out if (b, t) not in cold]
+        return warm or out
+
+    outside = [b for b in live if b not in members]
+    # post: best weight from b (outside) to a sink, over outside blocks only.
+    memo = {}
+
+    def to_sink(b):
+        stack = [(b, False)]
+        while stack:
+            x, done = stack.pop()
+            if x in memo:
+                continue
+            nxt = [t for t in succ(x) if t not in members]
+            if not done:
+                stack.append((x, True))
+                stack.extend((t, False) for t in nxt if t not in memo)
+                continue
+            best = max((memo[t] for t in nxt if t in memo), default=zero)
+            memo[x] = add(weight(x), best)
+        return memo[b]
+
+    exits = {t for m in members for t in succ(m) if t not in members}
+    post = max((to_sink(t) for t in exits), default=zero)
+    # pre: best weight from the entry to a block with an edge into the loop, forward over outside blocks.
+    if 0 in members:
+        return zero, post
+    post_order, seen, stack = [], {0}, [(0, iter([t for t in succ(0) if t not in members]))]
+    while stack:  # depth-first over the outside DAG from the entry, post-order
+        b, it = stack[-1]
+        t = next(it, None)
+        if t is None:
+            post_order.append(stack.pop()[0])
+        elif t not in seen:
+            seen.add(t)
+            stack.append((t, iter([u for u in succ(t) if u not in members])))
+    best = {0: weight(0)}
+    pre = zero
+    for b in reversed(post_order):  # topological order: every predecessor settled first
+        if b not in best:
+            continue
+        for t in succ(b):
+            if t in members:
+                pre = max(pre, best[b])
+            else:
+                cand = add(best[b], weight(t))
+                if t not in best or cand > best[t]:
+                    best[t] = cand
+    return pre, post
 
 
 def longest_iteration(edges, dom, header, members, weight):
@@ -1217,4 +1294,14 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
     # Outside: what the entry reaches beyond the blocks of the loop whose iteration was counted
     # (its header is the path's first block).
     loop_end = max(blocks[b][1] for b in loops[path[0]])
-    return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])), loop_end)
+    result = scheduled(list(in_order(path)), list(indices(live - loops[path[0]])), loop_end)
+    if control is not None:
+        def cost(b):
+            s, e = blocks[b]
+            return (sum(control[i].stall for i in range(s, e + 1)), e - s + 1,
+                    sum(base_opcode(body[i][2]) == "STG" for i in range(s, e + 1)))
+        (pre_stall, pre_total, _), (post_stall, post_total, post_stg) = outside_path(
+            edges, dom, live, loops[path[0]], cost, cold_edges(body, blocks))
+        out.opath_pre_total, out.opath_pre_stall = pre_total, pre_stall
+        out.opath_post_total, out.opath_post_stall, out.opath_post_stg = post_total, post_stall, post_stg
+    return result
