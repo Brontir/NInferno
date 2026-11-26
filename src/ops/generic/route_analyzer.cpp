@@ -362,8 +362,8 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     // A launch of C-CTA clusters holds fewer CTAs than a plain one (a cluster lives in one GPC; 2
     // an SM on GB20x whatever the threads): the cluster facts' slots an SM (#1228).
     const Card::ClusterSize* cl = C > 1 ? c.cluster(C) : nullptr;
-    const double occ =
-        cl ? std::min(occupancy(c, warps, r.registers), cl->slots_sm) : occupancy(c, warps, r.registers);
+    const double occ            = cl ? std::min(occupancy(c, warps, r.registers), cl->slots_sm)
+                                     : occupancy(c, warps, r.registers);
     const double kiter = loop_i(r, &LoopCounts::k_iter), slots = sms * occ;
     const double trips = k / (B * C * kiter);
     const double nfull = std::floor(ctas / slots);
@@ -376,7 +376,7 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     // other ranks' partials, one rank after another (#pragma unroll 1), of `sets` weight sets.
     const double out = c.lat * sched(r, &StaticSchedule::outside_stall) / clk +
                        (cl ? 2.0 * cl->sync + (C - 1) * (sets > 1.5 ? cl->rank2 : cl->rank1) : 0.0);
-    const double red = (passes - 1.0) / passes;
+    const double red   = (passes - 1.0) / passes;
     const double steps = 2.0 - (A * B <= 8 && latency_row ? 1.0 : 0.0);
     const double bw    = loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes) +
                       loop_z(r, &LoopCounts::ldgsts_bytes);

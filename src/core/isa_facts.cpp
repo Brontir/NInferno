@@ -105,7 +105,8 @@ struct ClusterField {
 const std::vector<ClusterField>& cluster_fields() {
     static const std::vector<ClusterField> all = [] {
         std::vector<ClusterField> v;
-        for (const auto& [c, size] : {std::pair{2, &IsaCluster::c2}, std::pair{8, &IsaCluster::c8}}) {
+        for (const auto& [c, size] :
+             {std::pair{2, &IsaCluster::c2}, std::pair{8, &IsaCluster::c8}}) {
             const std::string k = std::to_string(c);
             v.push_back({"cluster_sync_ns_c" + k, "ns", size, &IsaClusterSize::sync_ns});
             v.push_back({"cluster_rank_ns_c" + k + "_s1", "ns", size, &IsaClusterSize::rank_ns_s1});

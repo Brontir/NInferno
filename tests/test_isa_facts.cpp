@@ -104,6 +104,7 @@ struct ExpectedCluster {
     const IsaClusterSize IsaCluster::* size;
     std::optional<double> IsaClusterSize::* member;
 };
+
 std::vector<ExpectedCluster> expected_cluster_facts() {
     return {{"cluster_sync_ns_c2", "ns", &IsaCluster::c2, &IsaClusterSize::sync_ns},
             {"cluster_rank_ns_c2_s1", "ns", &IsaCluster::c2, &IsaClusterSize::rank_ns_s1},
@@ -442,7 +443,7 @@ void parse_rules(const Json& file) {
                     {"tool", {{"probe", "cluster_probe 1"}}},
                     {"notes", Json::array()},
                     {"facts", Json::object()}};
-    value = 100.0;
+    value        = 100.0;
     for (const ExpectedCluster& e : expected_cluster_facts()) {
         cluster["facts"][e.name] = {{"value", value}, {"unit", e.unit}};
         value += 10.0;

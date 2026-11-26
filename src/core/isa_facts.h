@@ -72,11 +72,13 @@ struct IsaClusterSize {
                                       // cluster lives in one GPC), for a CTA a plain launch
                                       // holds four of an SM
 };
+
 struct IsaCluster {
     std::string card;  // the card the cluster probe ran on
     std::string probe; // "cluster_probe 1"
     int sms = 0;       // that card's SMs
     IsaClusterSize c2, c8;
+
     // The facts of cluster size C, nullptr for a size the probe does not measure.
     [[nodiscard]] const IsaClusterSize* size(int C) const {
         return C == 2 ? &c2 : C == 8 ? &c8 : nullptr;
