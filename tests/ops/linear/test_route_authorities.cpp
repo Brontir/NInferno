@@ -525,7 +525,9 @@ void check_known() {
         // a decode call on a board the analyzer prices: its ranked routes (route_analyzer.h
         // device_routes), ahead of the table and the rules (analyzer_entry). The list leads with
         // A8 routes at T 1 and T 4: A16Only admits none of them, so the walk takes the list's
-        // register MMA; AllowA8 takes its head.
+        // register MMA; AllowA8 takes its head. At T 4 vec leads rmma.m1.n1.w1x8 by ~1.3 % of the
+        // price (8116 vs 8224 ns, analyzer.py on the RTX 5090 row): a change to either route's
+        // facts or price may swap them, which this case then reports.
         {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
         {"rtx5090", q4k, big, a16, 4, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
         {"rtx5090", q4k, big, LinearPolicy::AllowA8, 1, false, 0, "analyzer", "predicted",

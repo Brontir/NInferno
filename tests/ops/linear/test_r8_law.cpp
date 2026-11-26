@@ -648,12 +648,12 @@ void check_evidence_paths() {
         {"rtx3090ti", 0x2203, ninferno::QType::GGML_IQ4_NL, 4096, 5120, g::Evidence::Kind::Carried,
          "r8-table"},
     };
-    // Under evidence the analyzer's ranked list (routes/pick: the board's own, lists are never
-    // carried) answers T = 1 ahead of the R8 table and law (route_authorities.cpp analyzer_entry);
-    // legacy reads no list, so every R8 path is asked there. AD102 is held out of the lists (gen.py
-    // HELD_CHIPS, #1211), so its two paths (the 4090's table, the 4090 D's law) are asked under
-    // evidence as well. The 3090 Ti's carried path is asked under legacy only: under evidence
-    // ga102-84sm.json's own list answers that call (the analyzer, r8.w4r2 first).
+    // Under evidence the analyzer (route_analyzer::device_routes, priced on the board's facts at
+    // the call) answers T = 1 ahead of the R8 table and law (route_authorities.cpp analyzer_entry);
+    // legacy asks no analyzer, so every R8 path is asked there. AD102 is held out of the analyzer
+    // (route_analyzer.h kHeldChips, #1211), so its two paths (the 4090's table, the 4090 D's law)
+    // are asked under evidence as well. The 3090 Ti's carried path is asked under legacy only:
+    // under evidence the analyzer answers that call (GA102, r8.w4r2 first).
     for (const bool evidence : {false, true}) {
         const ninferno::ops::ScopedRoutePolicy policy(evidence ? ninferno::RoutePolicy::Evidence
                                                                : ninferno::RoutePolicy::Legacy);
