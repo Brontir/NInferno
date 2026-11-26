@@ -525,22 +525,22 @@ int route_tune_main(int argc, char** argv) {
                 // The GPU waits while the host enqueues the sample (20 us a call), so a sample of
                 // short calls times the kernels and not the host's launch rate. Launch overlap
                 // between the calls is the stream's front end only: the tuner sets no PDL joins.
-                timer.set_lead_us(over_copies && l2_reps > 0 ? 20.0 * l2_reps
-                                  : over_copies && !spare.empty() ? 20.0 * (1 + spare.size()) : 0.0);
-                const double us =
-                    timer.median_us([&](cudaStream_t s) {
-                        call.weight = &w.weight;
+                timer.set_lead_us(over_copies && l2_reps > 0      ? 20.0 * l2_reps
+                                  : over_copies && !spare.empty() ? 20.0 * (1 + spare.size())
+                                                                  : 0.0);
+                const double us = timer.median_us([&](cudaStream_t s) {
+                    call.weight = &w.weight;
+                    generic::run_route(r, call, &workspace, s);
+                    if (!over_copies) return;
+                    for (int i = 1; i < l2_reps; ++i) generic::run_route(r, call, &workspace, s);
+                    if (l2_reps > 0) return;
+                    for (const RandomWeight& c : spare) {
+                        call.weight = &c.weight;
                         generic::run_route(r, call, &workspace, s);
-                        if (!over_copies) return;
-                        for (int i = 1; i < l2_reps; ++i) generic::run_route(r, call, &workspace, s);
-                        if (l2_reps > 0) return;
-                        for (const RandomWeight& c : spare) {
-                            call.weight = &c.weight;
-                            generic::run_route(r, call, &workspace, s);
-                        }
-                    }) /
-                    static_cast<double>(over_copies && l2_reps > 0 ? l2_reps
-                                        : over_copies ? 1 + spare.size() : 1);
+                    }
+                }) / static_cast<double>(over_copies && l2_reps > 0 ? l2_reps
+                                         : over_copies              ? 1 + spare.size()
+                                                                    : 1);
                 if (routes_csv &&
                     written.insert({static_cast<int>(r.family) * 256 + r.schedule, t}).second) {
                     routes_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
@@ -587,11 +587,14 @@ int route_tune_main(int argc, char** argv) {
                     const bool rotated = over_copies && !spare.empty();
                     routes_csv << ',' << run_id << ',' << device_id << ','
                                << (over_copies && l2_reps > 0 ? "l2hot"
-                                   : rotated           ? "copies"
-                                   : timer.flushes() ? "flushed"
-                                                     : "warm")
-                               << ',' << (over_copies && l2_reps > 0 ? std::size_t(l2_reps) : rotated ? 1 + spare.size() : std::size_t{1}) << ','
-                               << samples << ',' << pci_id << ',';
+                                   : rotated                  ? "copies"
+                                   : timer.flushes()          ? "flushed"
+                                                              : "warm")
+                               << ','
+                               << (over_copies && l2_reps > 0 ? std::size_t(l2_reps)
+                                   : rotated                  ? 1 + spare.size()
+                                                              : std::size_t{1})
+                               << ',' << samples << ',' << pci_id << ',';
                     // The launch the route makes for this call: its CTAs and threads per CTA
                     // (ggml's vector kernel: its first kVecMaxColumns tokens, its matrix kernel one
                     // prefill slice; R8 in the form the call takes, pre-quantized where this
