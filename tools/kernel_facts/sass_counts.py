@@ -77,6 +77,7 @@ waits (`outside_waits`) and their CTA barriers (`outside_bar`). A DEPBAR's wait 
 counter is in its operand, not in the mask, and is not counted as a wait.
 """
 
+import os
 import re
 from collections import Counter
 
@@ -150,7 +151,31 @@ SCHEDULE_FIELDS = ("stall_sum", "sb_waits", "sb_waits_local", "outside_total", "
 # The snapshot's columns for these facts, in order: the loop's counts (schema 2), then the
 # schedule (schema 4).
 LOOP_COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:]
-COLUMNS = LOOP_COLUMNS + SCHEDULE_FIELDS
+# The code after the K loop by who runs it (lab round 30, tail_counts): outside_total lumps what
+# every warp runs once (the prologue, the K-split partial store and its barrier) with what one
+# warp of the CTA runs after the barrier (the K-split reduce, then the epilogue's store sites, of
+# which a decode of T tokens executes only those whose token index is below T). post_: every
+# outside instruction placed after the loop and its stall sum. red_: the K-split reduce after the
+# last CTA barrier that follows the loop (0 where there is none, K not split): its shared loads
+# (a reduce step each: one partial read back), its instructions (the loads and the adds that
+# take them) and their stall sum. epi_: the rest of the code after that barrier (all of the code
+# after the loop where there is none): its instructions, its stall sum and its global stores
+# (the store sites; epi_total / epi_stg is a site's instructions, guard included).
+# Appended after the schedule, and written only under KF_TAIL=1 (lab files the C++ reader never
+# sees; extract with --families rmma, so that no section's columns move).
+# Then the K loop's waits that expose a global load's latency, one per burst of loads, and
+# those of the code outside it (global_waits; the PROLOGUE_FIELDS of the same names, which the
+# r8 rows already carry): the DRAM round trips a K trip of this arch's SASS really exposes.
+TAIL_FIELDS = ("post_total", "post_stall", "red_lds", "red_total", "red_stall", "epi_total",
+               "epi_stall", "epi_stg", "glb_waits", "outside_glb_waits")
+
+
+def columns_with(tail):
+    """The register-MMA rows' loop columns: schema 4's, then the tail fields where asked."""
+    return LOOP_COLUMNS + SCHEDULE_FIELDS + (TAIL_FIELDS if tail else ())
+
+
+COLUMNS = columns_with(os.environ.get("KF_TAIL") == "1")
 # The pipe counts (#785): the instructions of the counted iteration that the coarse classes above
 # lump together but that issue to different pipes, by base opcode. I2F the conversion on the
 # multi-function path (I2F.F32.S32 ...; Turing's int-to-float), I2FP the one on the ALU (sm_86 on),
@@ -740,7 +765,7 @@ class LoopCounts:
         self.k_iter = 0
         self.mma_shape = "-"
         for f in (COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + INFLIGHT_FIELDS +
-                  PROLOGUE_FIELDS + PRODUCER_FIELDS):
+                  PROLOGUE_FIELDS + PRODUCER_FIELDS + TAIL_FIELDS):
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
@@ -977,6 +1002,41 @@ def outside_counts(body, control, outside, out):
     return out
 
 
+def tail_counts(body, control, outside, loop_end):
+    """{field: value} of TAIL_FIELDS: `outside`, the indices outside the K loop in address order,
+    `loop_end`, the loop's last index. The code after the loop is taken by address (ptxas lays
+    the tail after the loop it follows; a block it moved before the loop counts with the
+    prologue). After the last barrier a reduce step is a shared load and the instruction that
+    first reads the register it wrote (the add of the partial; ptxas sinks some of the loads into
+    the store site that uses them, so the reduce is no address range): a walk in address order,
+    no branch followed. The rest of that tail is the epilogue."""
+    out = dict.fromkeys(TAIL_FIELDS[:8], 0)
+    post = [i for i in outside if i > loop_end]
+    out["post_total"] = len(post)
+    out["post_stall"] = sum(control[i].stall for i in post)
+    bars = [k for k, i in enumerate(post) if base_opcode(body[i][2]) == "BAR"]
+    tail = post[bars[-1] + 1:] if bars else post
+    partials = set()  # the registers holding a partial read back and not yet added
+    for i in tail:
+        opcode, operands = body[i][2], body[i][3]
+        op = base_opcode(opcode)
+        written = written_registers(opcode, operands)
+        fields = operands.split(",")
+        reads = set()
+        for f in fields[1:] if written else fields:
+            reads.update(f"R{m.group(1)}" for m in SASS_READ_REGISTER.finditer(f))
+        load = bool(bars) and op in ("LDS", "LDSM")
+        part = "red" if load or reads & partials else "epi"
+        partials -= reads | written
+        if load:
+            partials |= written
+            out["red_lds"] += 1
+        out[part + "_total"] += 1
+        out[part + "_stall"] += control[i].stall
+        out["epi_stg"] += op == "STG"
+    return out
+
+
 def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None):
     """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
     the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
@@ -1009,10 +1069,14 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
         return out
     control = controls(body)
 
-    def scheduled(iteration, outside):
+    def scheduled(iteration, outside, loop_end=None):
         if control is not None:
             for name, value in schedule_counts(body, control, iteration, outside).items():
                 setattr(out, name, value)
+            if loop_end is not None:
+                tail = tail_counts(body, control, sorted(outside), loop_end)
+                for name, value in tail.items():
+                    setattr(out, name, value)
             out.scheduled = True
         return out
 
@@ -1102,4 +1166,5 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
             out.k_iter = 128 * idp // tiles
     # Outside: what the entry reaches beyond the blocks of the loop whose iteration was counted
     # (its header is the path's first block).
-    return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])))
+    loop_end = max(blocks[b][1] for b in loops[path[0]])
+    return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])), loop_end)

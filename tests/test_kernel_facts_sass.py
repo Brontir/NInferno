@@ -641,6 +641,110 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual(c.without_schedule().schedule_problems(), [])
 
 
+# A K-split kernel's tail (lab round 30): the loop 0x100 .. 0x130; every warp stores its partial
+# and meets the barrier (0x140 .. 0x160); the warps past the first leave (0x180); the first reads
+# two partials back and adds them (0x190 .. 0x1c0), then two store sites, each branched over where
+# its token is past the call's; ptxas sank the second site's partial load into the site (0x240).
+TAIL = [
+    (0x000, "MOV R1, c[0x0][0x28] ;"),
+    (0x010, "BRA 0x100 ;"),
+    (0x100, "LDG.E.128 R8, desc[UR8][R2.64] ;"),
+    (0x110, "HMMA.16816.F32.BF16 R36, R8, R16, R36 ;"),
+    (0x120, "ISETP.GE.AND P0, PT, R10, R11, PT ;"),
+    (0x130, "@!P0 BRA 0x100 ;"),
+    (0x140, "S2R R0, SR_TID.X ;"),
+    (0x150, "STS [R3], R36 ;"),
+    (0x160, "BAR.SYNC.DEFER_BLOCKING 0x0 ;"),
+    (0x170, "ISETP.NE.AND P1, PT, R0, RZ, PT ;"),
+    (0x180, "@P1 EXIT ;"),
+    (0x190, "LDS R4, [R3] ;"),
+    (0x1a0, "LDS R5, [R3+0x4] ;"),
+    (0x1b0, "FADD R36, R36, R4 ;"),
+    (0x1c0, "FADD R36, R36, R5 ;"),
+    (0x1d0, "ISETP.GE.AND P2, PT, R12, c[0x0][0x1b0], PT ;"),
+    (0x1e0, "@P2 BRA 0x220 ;"),
+    (0x1f0, "FMUL R37, R36, R30 ;"),
+    (0x200, "STG.E.U16 [R6.64], R37 ;"),
+    (0x220, "ISETP.GE.AND P3, PT, R13, c[0x0][0x1b0], PT ;"),
+    (0x230, "@P3 EXIT ;"),
+    (0x240, "LDS R7, [R3+0x8] ;"),
+    (0x250, "FADD R38, R39, R7 ;"),
+    (0x260, "FMUL R38, R38, R30 ;"),
+    (0x270, "STG.E.U16 [R6.64+0x2], R38 ;"),
+    (0x280, "EXIT ;"),
+]
+TAIL_WORDS = {0x160: BAR_WORD, 0x190: high_word(1, write=0), 0x1a0: high_word(1, write=1),
+              0x240: high_word(1, write=0)}
+
+
+class Tail(unittest.TestCase):
+    """The code after the K loop by who runs it (sass_counts.TAIL_FIELDS, lab round 30): the
+    K-split reduce and the epilogue's store sites."""
+
+    def tail(self, lines, words=TAIL_WORDS):
+        c = sc.loop_counts(body_of(lines, words))
+        return tuple(getattr(c, f) for f in sc.TAIL_FIELDS[:8])
+
+    def test_reduce_and_epilogue(self):
+        c = sc.loop_counts(body_of(TAIL, TAIL_WORDS))
+        self.assertEqual((c.loops, c.total, c.outside_total, c.outside_bar), (1, 4, 2 + 20, 1))
+        # After the loop: 20 instructions at stall 2, the barrier at 6, the three LDS at 1.
+        self.assertEqual((c.post_total, c.post_stall), (20, 20 * 2 + 4 - 3))
+        # The reduce: the three partial loads and the three adds that take them (the sunk one
+        # too), not the FMUL of a sum; the epilogue: the other 11 after the barrier, two sites.
+        self.assertEqual((c.red_lds, c.red_total, c.red_stall), (3, 6, 3 * 1 + 3 * 2))
+        self.assertEqual((c.epi_total, c.epi_stall, c.epi_stg), (11, 22, 2))
+        # What every warp runs after the loop is the rest: the partial store and the barrier.
+        self.assertEqual(c.post_total - c.red_total - c.epi_total, 3)
+
+    def test_no_barrier_no_reduce(self):
+        # K not split: no barrier after the loop, so its shared loads are no partials and the
+        # whole of the code after the loop is the epilogue.
+        plain = [(o, "NOP ;" if o == 0x160 else t) for o, t in TAIL]
+        self.assertEqual(self.tail(plain, {k: v for k, v in TAIL_WORDS.items() if k != 0x160}),
+                         (20, 20 * 2 - 3, 0, 0, 0, 20, 20 * 2 - 3, 2))
+
+    def test_partial_overwritten_or_read_once(self):
+        # A register written again before it is read holds no partial; a partial is added once.
+        moved = [(o, "MOV R4, R9 ;" if o == 0x1a0 else t) for o, t in TAIL]
+        words = {k: v for k, v in TAIL_WORDS.items() if k != 0x1a0}
+        post, post_stall, lds, total, stall, epi, epi_stall, stg = self.tail(moved, words)
+        # One load fewer; 0x1b0 reads the MOV's R4 and 0x1c0 an R5 nothing loaded: epilogue.
+        self.assertEqual((lds, total, epi, stg), (2, 2 + 1, 11 + 3, 2))
+        twice = [(o, "FADD R38, R38, R7 ;" if o == 0x260 else t) for o, t in TAIL]
+        self.assertEqual(self.tail(twice)[2:4], (3, 6))
+
+    def test_no_loop_and_no_control(self):
+        straight = [l for l in TAIL if l[0] not in (0x120, 0x130)]
+        self.assertEqual(self.tail(straight), (0,) * 8)
+        text = "\n".join(l for l in sass(TAIL).splitlines() if "/*0" in l or "Function" in l)
+        bare = sc.loop_counts(sc.parse_functions(text.splitlines())["_Z6kernelv"])
+        self.assertEqual(tuple(getattr(bare, f) for f in sc.TAIL_FIELDS),
+                         (0,) * len(sc.TAIL_FIELDS))
+        # The last two are global_waits' counts (the r8 rows' columns of the same names).
+        self.assertEqual(sc.TAIL_FIELDS[8:], ("glb_waits", "outside_glb_waits"))
+        waits = {0x100: LDG_SETS_SB2, 0x110: HMMA_WAITS_SB2}
+        self.assertEqual(sc.loop_counts(body_of(TAIL, waits)).glb_waits, 1)
+
+    def test_columns_append_only(self):
+        # The committed rows keep schema 4's columns; KF_TAIL=1 appends the tail fields to them.
+        self.assertEqual(sc.columns_with(False), sc.LOOP_COLUMNS + sc.SCHEDULE_FIELDS)
+        self.assertEqual(sc.columns_with(True), sc.columns_with(False) + sc.TAIL_FIELDS)
+        if os.environ.get("KF_TAIL") != "1":
+            self.assertEqual(sc.COLUMNS, sc.columns_with(False))
+            c = sc.loop_counts(body_of(TAIL, TAIL_WORDS))
+            self.assertEqual(len(c.row()), len(sc.COLUMNS))
+        # A row with the tail is as wide as no other row form (LoopCounts.from_row tells the
+        # forms apart by width).
+        base = len(sc.columns_with(False))
+        piped = base + len(sc.PIPE_FIELDS)
+        others = {base, len(sc.LOOP_COLUMNS), piped, piped + len(sc.WAIT_FIELDS),
+                  piped + len(sc.WAIT_FIELDS) + len(sc.PRODUCER_FIELDS),
+                  piped + len(sc.WAIT_FIELDS) + len(sc.INFLIGHT_FIELDS),
+                  piped + len(sc.PROLOGUE_FIELDS)}
+        self.assertNotIn(len(sc.columns_with(True)), others)
+
+
 class Snapshot(unittest.TestCase):
     KEY = ("Bf16Decoder", 1, 4, 1, 1, 1, 0, 0, 0)
 
