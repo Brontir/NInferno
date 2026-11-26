@@ -1186,8 +1186,7 @@ void run(const Call& call, LinearPolicy policy, WorkspaceArena* workspace, cudaS
             << qtype_name(problem.qtype) << ' '
             << compute_class_name(compute_class(problem.qtype, policy)) << ' '
             << epilogue_name(call.epilogue) << ' ' << call.rows << ' ' << call.weight->k << ' '
-            << call.x->ne[1] << ' ' << route_name(route) << '
-';
+            << call.x->ne[1] << ' ' << route_name(route) << '\n';
     }
     run_route(route, call, workspace, stream, released);
 }
