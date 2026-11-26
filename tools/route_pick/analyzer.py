@@ -529,16 +529,14 @@ def vec_load_unit(c, fmt, T):
     return _VLU[key]
 
 
-def sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, dram_trips, bw, ld_clk, icf=1.0, warps=VEC_WARPS,
-            extra=0.0):
+def sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, dram_trips, bw, ld_clk, icf=1.0, warps=VEC_WARPS):
     """ns one CTA's warp takes for its whole K on an SM that holds cps such CTAs: the larger of
       its own chain   trips x the loop's stall clocks + the epilogue's ('o'), times the icache step, and a DRAM window a round trip;
       the issue bound ('i') one warp of each resident CTA shares a partition: cps x the instructions, a clock each, times the icache step;
-      the load unit   ('l') every resident warp's loads through the SM's one load unit: cps x warps x ld_clk (the whole K's clocks).
-    extra: ns more on the chain (vec's waits beyond its loads in flight)."""
+      the load unit   ('l') every resident warp's loads through the SM's one load unit: cps x warps x ld_clk (the whole K's clocks)."""
     clk = c['clk']
     og = 'o' in mode
-    sm = icf * (trips * stall + (o_stall if og else 0.0)) / clk + dram_trips * window(c, P, bw) + extra
+    sm = icf * (trips * stall + (o_stall if og else 0.0)) / clk + dram_trips * window(c, P, bw)
     if 'i' in mode:
         sm = max(sm, icf * cps * (trips * tot + (o_tot if og else 0.0)) / clk)
     if 'l' in mode:

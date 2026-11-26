@@ -766,9 +766,9 @@ std::optional<std::pair<double, double>> vec_load_unit(const Card& c, QType q) {
 
 double sm_side(const Card& c, bool og, bool ib, bool lb, double tot, double stall, double o_tot,
                double o_stall, double trips, double cps, double dram_trips, double bw,
-               double ld_clk, double warps = kVecWarps, double extra = 0.0) {
+               double ld_clk, double warps = kVecWarps) {
     const double clk = c.clk;
-    double sm = (trips * stall + (og ? o_stall : 0.0)) / clk + dram_trips * window(c, bw) + extra;
+    double sm = (trips * stall + (og ? o_stall : 0.0)) / clk + dram_trips * window(c, bw);
     if (ib) sm = std::max(sm, cps * (trips * tot + (og ? o_tot : 0.0)) / clk);
     if (lb) sm = std::max(sm, cps * warps * ld_clk / clk);
     return sm;
@@ -828,7 +828,7 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
         const double d   = nc * bg / c.bus;
         const double cps = std::ceil(nc / c.sms);
         double sm = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot, o_stall,
-                            trips, cps, k / 1024.0, bw, ld, kVecWarps, 0.0);
+                            trips, cps, k / 1024.0, bw, ld, kVecWarps);
         // The SM's L2 link carries every resident warp's trip bytes and, where the rows its CTAs
         // keep open and the activation exceed L1, the re-reads: the share of them past the bytes
         // the SM keeps in flight at a linear rate (ring_free) queues there.
