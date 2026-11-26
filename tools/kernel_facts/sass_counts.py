@@ -13,9 +13,10 @@ How the loop is found (`loop_counts`):
    opcode, operands. A branch's target is the trailing hex offset of its operands.
 2. Basic blocks and their edges: a block ends at a branch (BRA, BRA.U, BRA.DIV, BRA.CONV), an
    EXIT or a RET; a guarded or predicated branch also falls through (one on PT / UPT does not,
-   one on !PT is never taken), so do BRA.DIV and BRA.CONV; CALL falls through (the callee is
-   outside the loop's count, see below); an indirect branch (BRX, JMX, their uniform forms) makes the control flow unknown and the counts
-   `loops 0`. Blocks the entry does not reach (a callee, the trailing self-branch) take no part.
+   one on !PT is never taken), so do BRA.DIV and BRA.CONV (whose fall-through, the emulation a
+   converged warp skips, the counted iteration does not take); CALL falls through (the callee
+   is outside the loop's count, see below); an indirect branch (BRX, JMX, their uniform forms)
+   makes the control flow unknown and the counts `loops 0`. Blocks the entry does not reach (a callee, the trailing self-branch) take no part.
 3. Dominators over the blocks; a back edge is an edge into a block that dominates its source;
    the natural loop of a back edge is its header plus every block that reaches the source
    without passing the header; back edges to one header are one loop.
@@ -342,8 +343,10 @@ def branch_predicate(operands):
 def branch_edges(guarded, opcode, operands):
     """(takes the target, may fall through) of a branch: a guard or a predicate operand makes it
     conditional, PT / UPT unconditional, !PT / !UPT never taken, BRA.DIV divergent. BRA.CONV (a
-    runtime-mask shfl / warpsync: ptxas falls through to a MOV and the CALL of its callee placed
-    after the last EXIT) may fall through as well (#1241)."""
+    runtime-mask shfl / warpsync, #1241) may fall through as well: a converged warp takes it (to
+    the inline SHFL of a shuffle, past the emulation of a warpsync); the fall-through is the
+    emulation (MOV, the CALL of its callee placed after the last EXIT, a BRA past the inline
+    SHFL). longest_iteration counts the taken side."""
     if opcode.startswith(("BRA.DIV", "BRA.CONV")):
         return True, True
     predicate = branch_predicate(operands)
@@ -557,13 +560,15 @@ def natural_loops(edges, dom, preds, live):
     return loops
 
 
-def longest_iteration(edges, dom, header, members, weight):
+def longest_iteration(edges, dom, header, members, weight, cold=frozenset()):
     """The blocks of one iteration of the loop `members` (headed by `header`) on its heaviest
     path: from the header, over the loop's forward edges (the back edges dropped), to a block
     that branches back to the header, maximising the sum of `weight(block)` (a tuple, compared
     lexicographically). The body without its back edges is a DAG for the code nvcc emits; an
-    MMA-free loop nested in the body is walked once."""
-    forward = {b: [s for s in edges[b] if s in members and not is_back_edge(dom, b, s)]
+    MMA-free loop nested in the body is walked once. `cold`: edges (block, successor) the path
+    does not take (a BRA.CONV's fall-through into the emulation a converged warp skips)."""
+    forward = {b: [s for s in edges[b]
+                   if s in members and not is_back_edge(dom, b, s) and (b, s) not in cold]
                for b in members}
     order, seen, stack = [], {header}, [(header, iter(forward[header]))]
     while stack:  # iterative depth-first walk, post-order
@@ -1105,7 +1110,11 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
                       if not any(base_opcode(body[i][2]) in excluded for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
-    iterations = {h: longest_iteration(edges, dom, h, loops[h], weight) for h in innermost}
+    # A BRA.CONV's fall-through (the emulation path, branch_edges) is live but not counted.
+    starts = {s: b for b, (s, _) in enumerate(blocks)}
+    cold = frozenset((b, starts[e + 1]) for b, (_, e) in enumerate(blocks)
+                     if body[e][2].startswith("BRA.CONV") and e + 1 in starts)
+    iterations = {h: longest_iteration(edges, dom, h, loops[h], weight, cold) for h in innermost}
     iterations = {h: p for h, p in iterations.items() if p}
     out.loops = len(iterations)
     if not iterations:
