@@ -768,7 +768,7 @@ double sm_side(const Card& c, bool og, bool ib, bool lb, double tot, double stal
                double o_stall, double trips, double cps, double dram_trips, double bw,
                double ld_clk, double warps = kVecWarps) {
     const double clk = c.clk;
-    double sm = (trips * stall + (og ? o_stall : 0.0)) / clk + dram_trips * window(c, bw);
+    double sm        = (trips * stall + (og ? o_stall : 0.0)) / clk + dram_trips * window(c, bw);
     if (ib) sm = std::max(sm, cps * (trips * tot + (og ? o_tot : 0.0)) / clk);
     if (lb) sm = std::max(sm, cps * warps * ld_clk / clk);
     return sm;
