@@ -187,6 +187,8 @@ class LoopFinder(unittest.TestCase):
         body = body_of(KERNEL)
         self.assertEqual(sc.branch_edges(False, "BRA.U", "!UP0, 0x530"), (True, True))
         self.assertEqual(sc.branch_edges(False, "BRA.DIV", "~URZ, 0x530"), (True, True))
+        self.assertEqual(sc.branch_edges(False, "BRA.CONV", "0x230"), (True, True))  # sm_75
+        self.assertEqual(sc.branch_edges(False, "BRA.CONV", "UR6, 0x270"), (True, True))  # sm_86
         self.assertEqual(sc.branch_edges(False, "BRA.U", "UPT, 0x530"), (True, False))
         self.assertEqual(sc.branch_edges(False, "BRA", "!PT, 0x530"), (False, True))
         self.assertEqual(sc.branch_edges(True, "BRA", "0x530"), (True, True))
@@ -195,6 +197,36 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(succ[7], [8])  # BRA 0x100 at index 7: the loop header, index 8
         self.assertIsNone(sc.successors(body + [(0x530, False, "BRXU", "UR4 -0x530")]))
         self.assertIsNone(sc.successors(body + [(0x530, False, "BRA", "0x9000")]))
+
+    def test_runtime_mask_shuffle_in_the_loop(self):
+        # A runtime-mask __shfl_sync in the K loop as ptxas lays it out (nvcc 13.2, sm_86): a
+        # converged warp takes BRA.CONV to the inline SHFL; the fall-through is the emulation
+        # (MOV, the CALL of the callee after the last EXIT, a BRA past the SHFL). The emulation
+        # is live (#1241) but the counted iteration takes the converged side: FFMA, BRA.CONV,
+        # SHFL, ISETP, BRA.
+        conv = [(0x000, "MOV R1, R2 ;"), (0x010, "FFMA R4, R5, R6, R4 ;"),
+                (0x020, "BRA.CONV UR6, 0x060 ;"), (0x030, "MOV R10, 0x50 ;"),
+                (0x040, "CALL.REL.NOINC 0x0b0 ;"), (0x050, "BRA 0x070 ;"),
+                (0x060, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"),
+                (0x070, "ISETP.GE.AND P0, PT, R1, R3, PT ;"), (0x080, "@!P0 BRA 0x010 ;"),
+                (0x090, "EXIT ;"), (0x0a0, "BRA 0x0a0 ;"),
+                (0x0b0, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x0c0, "RET.REL.NODEC R20 0x0 ;")]
+        body = body_of(conv)
+        c = sc.loop_counts(body, tiles=1)
+        self.assertEqual(c.loops, 1)
+        self.assertEqual((c.total, c.shfl), (5, 1))
+        succ = sc.successors(body)
+        self.assertEqual(sorted(succ[2]), [3, 6])  # BRA.CONV: the SHFL and the emulation's MOV
+        self.assertTrue(sc.tail_reached(body, 9))  # the callee, by the emulation's CALL
+        # __syncwarp(mask): nothing on the taken side, the emulation is MOV, CALL: the
+        # iteration is FFMA, BRA.CONV, ISETP, BRA, as a converged warp runs it.
+        sync = [(o, t) for o, t in conv if o not in (0x050, 0x060)]
+        sync = [(o, "BRA.CONV UR6, 0x070 ;" if o == 0x020 else t) for o, t in sync]
+        self.assertEqual(sc.loop_counts(body_of(sync), tiles=1).total, 4)
+        # A BRA.CONV whose target lies outside the loop: its fall-through is the only way round,
+        # so the iteration takes it rather than losing the loop.
+        out = [(o, "BRA.CONV UR6, 0x090 ;" if o == 0x020 else t) for o, t in sync]
+        self.assertEqual(sc.loop_counts(body_of(out), tiles=1).loops, 1)
 
     def test_no_loop_and_unknown_flow(self):
         straight = [l for l in KERNEL if l[0] not in (0x2f0, 0x300)]
