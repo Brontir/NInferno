@@ -223,6 +223,10 @@ class LoopFinder(unittest.TestCase):
         sync = [(o, t) for o, t in conv if o not in (0x050, 0x060)]
         sync = [(o, "BRA.CONV UR6, 0x070 ;" if o == 0x020 else t) for o, t in sync]
         self.assertEqual(sc.loop_counts(body_of(sync), tiles=1).total, 4)
+        # A BRA.CONV whose target lies outside the loop: its fall-through is the only way round,
+        # so the iteration takes it rather than losing the loop.
+        out = [(o, "BRA.CONV UR6, 0x090 ;" if o == 0x020 else t) for o, t in sync]
+        self.assertEqual(sc.loop_counts(body_of(out), tiles=1).loops, 1)
 
     def test_no_loop_and_unknown_flow(self):
         straight = [l for l in KERNEL if l[0] not in (0x2f0, 0x300)]

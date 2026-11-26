@@ -16,7 +16,8 @@ How the loop is found (`loop_counts`):
    one on !PT is never taken), so do BRA.DIV and BRA.CONV (whose fall-through, the emulation a
    converged warp skips, the counted iteration does not take); CALL falls through (the callee
    is outside the loop's count, see below); an indirect branch (BRX, JMX, their uniform forms)
-   makes the control flow unknown and the counts `loops 0`. Blocks the entry does not reach (a callee, the trailing self-branch) take no part.
+   makes the control flow unknown and the counts `loops 0`. Blocks the entry does not reach (a
+   callee, the trailing self-branch) take no part.
 3. Dominators over the blocks; a back edge is an edge into a block that dominates its source;
    the natural loop of a back edge is its header plus every block that reaches the source
    without passing the header; back edges to one header are one loop.
@@ -560,16 +561,28 @@ def natural_loops(edges, dom, preds, live):
     return loops
 
 
+def cold_edges(body, blocks):
+    """The edges (block, successor) a counted iteration does not take: a BRA.CONV's fall-through,
+    the emulation path a converged warp skips (branch_edges). Live all the same: code outside the
+    counted loop's blocks counts it among the outside alternatives, as it does BRA.DIV's stubs."""
+    starts = {s: b for b, (s, _) in enumerate(blocks)}
+    return frozenset((b, starts[e + 1]) for b, (_, e) in enumerate(blocks)
+                     if body[e][2].startswith("BRA.CONV") and e + 1 in starts)
+
+
 def longest_iteration(edges, dom, header, members, weight, cold=frozenset()):
     """The blocks of one iteration of the loop `members` (headed by `header`) on its heaviest
     path: from the header, over the loop's forward edges (the back edges dropped), to a block
     that branches back to the header, maximising the sum of `weight(block)` (a tuple, compared
     lexicographically). The body without its back edges is a DAG for the code nvcc emits; an
     MMA-free loop nested in the body is walked once. `cold`: edges (block, successor) the path
-    does not take (a BRA.CONV's fall-through into the emulation a converged warp skips)."""
-    forward = {b: [s for s in edges[b]
-                   if s in members and not is_back_edge(dom, b, s) and (b, s) not in cold]
-               for b in members}
+    does not take (a BRA.CONV's fall-through into the emulation a converged warp skips, cold_edges)
+    unless it is the block's only forward edge in the loop."""
+    forward = {}
+    for b in members:
+        out = [s for s in edges[b] if s in members and not is_back_edge(dom, b, s)]
+        warm = [s for s in out if (b, s) not in cold]
+        forward[b] = warm or out
     order, seen, stack = [], {header}, [(header, iter(forward[header]))]
     while stack:  # iterative depth-first walk, post-order
         b, it = stack[-1]
@@ -1110,10 +1123,7 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
                       if not any(base_opcode(body[i][2]) in excluded for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
-    # A BRA.CONV's fall-through (the emulation path, branch_edges) is live but not counted.
-    starts = {s: b for b, (s, _) in enumerate(blocks)}
-    cold = frozenset((b, starts[e + 1]) for b, (_, e) in enumerate(blocks)
-                     if body[e][2].startswith("BRA.CONV") and e + 1 in starts)
+    cold = cold_edges(body, blocks)
     iterations = {h: longest_iteration(edges, dom, h, loops[h], weight, cold) for h in innermost}
     iterations = {h: p for h, p in iterations.items() if p}
     out.loops = len(iterations)
