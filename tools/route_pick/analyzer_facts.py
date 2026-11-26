@@ -93,7 +93,13 @@ def load_facts(root):
         # (the probe card's slots over its SMs). A size without all four is not there (its schedules are not priced).
         ca = a.get('cluster')
         if ca:
+            # The same checks as the engine's reader (isa_facts.cpp): a run of the row's cc, every value a positive number.
+            if int(ca['cc']) != int(a['cc']):
+                raise ValueError('isa facts sm_%s: the cluster entry is a run of cc %s' % (arch, ca['cc']))
             cf, d['cluster'] = ca.get('facts', {}), {}
+            for n, v in cf.items():
+                if not isinstance(v.get('value'), (int, float)) or not v['value'] > 0:
+                    raise ValueError('isa facts sm_%s: cluster fact %s is not a positive number' % (arch, n))
             for C in (2, 8):
                 names = ('cluster_sync_ns_c%d' % C, 'cluster_rank_ns_c%d_s1' % C, 'cluster_rank_ns_c%d_s2' % C,
                          'cluster_slots_c%d' % C)
