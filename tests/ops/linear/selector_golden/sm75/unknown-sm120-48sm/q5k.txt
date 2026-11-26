@@ -744,7 +744,7 @@ q5k p0 add 28672x8192 speed T=128..2048 tiled.64x128 ws=0
 q5k p0 add 28672x8192 prefill T=17..2048 tiled.64x128 ws=0
 q5k p0 add 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q5k p0 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q5k p0 swiglu 14336x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+q5k p0 swiglu 14336x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 q5k p0 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q5k p0 swiglu 14336x8192 speed T=17..32 rmma.m1.n4.w4x1 ws=0
 q5k p0 swiglu 14336x8192 speed T=48..64 tiled.64x128 ws=0

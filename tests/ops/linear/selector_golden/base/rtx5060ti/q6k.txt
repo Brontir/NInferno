@@ -592,7 +592,8 @@ q6k p1 add 17408x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
 q6k p1 add 17408x5120 prefill T=2048 w4a8ws.128x64.p4 ws=13107200
 q6k p1 add 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q6k p1 add 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q6k p1 swiglu 8704x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+q6k p1 swiglu 8704x5120 speed T=1 r8.w8r1 ws=0
+q6k p1 swiglu 8704x5120 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6k p1 swiglu 8704x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q6k p1 swiglu 8704x5120 speed T=17..2048 ggml_mmq ws=0
 q6k p1 swiglu 8704x5120 prefill T=17 w4a8.32x128 ws=108928
