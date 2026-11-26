@@ -159,13 +159,19 @@ int check_case(const Case& c, cudaStream_t stream) {
         const auto chosen    = generic::select_route(problem, d.weight, t, false);
         if (!tuned[t]) {
             // A width the engine's analyzer answers (route_analyzer.h device_routes: T 1-8 off
-            // the held chips, ahead of the tuner's entry and the heuristic, #1227) takes a route
-            // of its list; any other width keeps the heuristic.
+            // the held chips, ahead of the tuner's entry and the heuristic, #1227) takes its first
+            // admitted route; any other width keeps the heuristic.
             const auto listed = ops::route_analyzer::device_routes(problem, t);
             if (!listed.empty()) {
-                if (std::find(listed.begin(), listed.end(), chosen) == listed.end()) {
+                // analyzer_entry's answer: the first listed route the weight and policy admit.
+                const auto first =
+                    std::find_if(listed.begin(), listed.end(), [&](generic::Route r) {
+                        return generic::route_admits(r, d.weight, c.policy);
+                    });
+                if (first == listed.end() || !(chosen == *first)) {
                     std::cerr << c.name << " T=" << t << ": untuned width "
-                              << generic::route_name(chosen) << " is not in the analyzer's list\n";
+                              << generic::route_name(chosen)
+                              << " is not the analyzer's first admitted route\n";
                     ++failures;
                 }
             } else if (!(chosen == heuristic)) {
@@ -416,16 +422,6 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         std::cout << "demoted retime: SKIP, no similar chip of this architecture lends a table\n";
         return 0;
     }
-    // Where the engine's analyzer answers the board's decode widths (route_analyzer.h
-    // device_routes: ahead of a table and of the tuner, #1227), no lent decode band is demoted and
-    // retimed there: the fixture is the held chips' (RTX 4090, 4060 Ti, 3060 among the stands).
-    if (!ops::route_analyzer::device_routes(
-             {QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560, 2048, generic::Epilogue::Store},
-             4)
-             .empty()) {
-        std::cout << "demoted retime: SKIP, the engine's analyzer answers this board's decode\n";
-        return 0;
-    }
     int failures    = 0;
     const auto fail = [&](const std::string& what) {
         std::cerr << "demoted retime: " << what << "\n";
@@ -541,6 +537,14 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
 
     // Evidence demotes them.
     ops::set_route_policy(RoutePolicy::Evidence);
+    // A width the engine's analyzer answers under evidence (route_analyzer.h device_routes: T 1-8
+    // off the held chips, ahead of a table and of the tuner, #1227) is the analyzer's: no table
+    // answer is demoted there and the tuner leaves it. The lent widths checked from here are the
+    // others (T 9-16 on those boards, every lent width on the held chips).
+    std::erase_if(held_widths, [&](std::int32_t t) {
+        return !ops::route_analyzer::device_routes(pdec, t).empty();
+    });
+    if (held_widths.empty()) fail("evidence: the analyzer answers every lent width");
     for (const std::int32_t t : held_widths) {
         if (answered(pdec, t, false)) fail("evidence keeps lent width T=" + std::to_string(t));
     }
