@@ -217,11 +217,22 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((counted.loops, counted.k_iter, counted.mma, counted.total),
                          (plain.loops, plain.k_iter, plain.mma, plain.total))
         self.assertGreater(counted.outside_total, 0)
-        # Without the BSSY the targets run to the function's end.
+        # Without the BSSY the targets run to the function's last unconditional EXIT: the callee
+        # after it is entered by its CALL alone.
         lines = [(o, "FMUL R36, R36, R30 ;" if o == 0x400 else t) for o, t in lines]
         body = body_of(lines)
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
-        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], body[-1][0])
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], 0x430)
+        # sm_70's out-of-line BRA.DIV stubs after that EXIT branch back into the K loop (#1226:
+        # the MoE activation switch became a BRX there): no target of the switch, so the flow is
+        # known and the loop counted as without the switch.
+        stub = [(0x530, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x540, "BRA 0x160 ;")]
+        body = body_of(lines + stub)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], 0x430)
+        stubbed = sc.loop_counts(body, tiles=2)
+        self.assertEqual((stubbed.loops, stubbed.k_iter, stubbed.mma),
+                         (plain.loops, plain.k_iter, plain.mma))
         # A switch before the K loop (the loop's back edge among its targets): unknown flow.
         early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
         body = body_of(early)
@@ -1369,30 +1380,47 @@ class RegisterAllocations(unittest.TestCase):
         moved = {key: (hi, 0, 0, 16, b)}
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, moved), moved)
         self.assertEqual(kernel_facts.keep_allocations("moegemm", "999", old, new), new)
-        # One register count, other loop counts: a real loop change, written.
+        # One register count, other loop counts: another schedule ptxas makes at that count
+        # (#1226), kept as the section has it (no flip).
         same = {key: (lo, 0, 0, 0, b)}
-        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), same)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), {key: old[key]})
         # extract --no-sass: the build's rows carry no loop; none is kept, so none mixes schemas.
         bare = {key: (hi, 0, 0, 0, None), other: (91, 0, 0, 0, None)}
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
         kernel_facts.render_section("moegemm", bare, "13.4.92")
 
-    def test_check_section_holds_one_allocation_exact(self):
+    def test_two_schedules_at_one_count_pass_where_counted(self):
+        # #1226: ptxas makes two schedules at one count of the counted rows too (sm_89
+        # GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77, sm_86 <6> 4 1 1 1 1 3 at 72): another loop at a
+        # counted count passes check on every counted row (it replaces the rule that held one count
+        # exact); the same at a row not counted, at a count not counted, or with another resource
+        # fails.
         import types
         args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
                                      dump=None, show=10)
-        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
-        arch = sorted(table)[0]
-        key, counts = sorted(table[arch].items())[0]
-        lo = min(counts)
         a, b = sc.LoopCounts(), sc.LoopCounts()
-        a.total, b.total = 1200, 1212
-        for with_sass, want in ((True, 1), (False, 0)):
+        a.total, b.total = 1086, 734
+
+        def check(k, at, regs, spill=0):
+            section = {"rows": {k: (regs, 0, 0, 0, a)}, "nvcc": "13.4.92"}
             with contextlib.redirect_stdout(io.StringIO()):
-                got = kernel_facts.check_section(
-                    args, "moegemm", {"rows": {key: (lo, 0, 0, 0, a)}, "nvcc": "13.4.92"},
-                    {key: (lo, 0, 0, 0, b)}, False, with_sass, arch)
-            self.assertEqual(got, want, with_sass)
+                return kernel_facts.check_section(args, "moegemm", section,
+                                                  {k: (regs, spill, 0, 0, b)}, False, True, at)
+
+        for at, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
+            for key, allowed in rows.items():
+                for regs in allowed:
+                    self.assertEqual(check(key, at, regs), 0, (at, key, regs))
+                self.assertEqual(check(key, at, max(allowed) + 1), 1, (at, key))
+                self.assertEqual(check(key, at, min(allowed), spill=8), 1, (at, key))
+        key = ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)
+        self.assertNotIn(key, kernel_facts.REGISTER_ALLOCATIONS["moegemm"].get("75", {}))
+        self.assertEqual(check(key, "75", 77), 1)
+        # extract --update keeps the section's row at one count and at another (no flip).
+        old, same = {key: (77, 0, 0, 0, a)}, {key: (77, 0, 0, 0, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, same), old)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, {key: (72, 0, 0, 0, b)}),
+                         old)
 
     def test_a_section_of_other_columns_keeps_nothing(self):
         data = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "data" /
@@ -1455,8 +1483,10 @@ class RegisterAllocations(unittest.TestCase):
         old = {key: (162, 0, 0, 0, a)}
         self.assertEqual(kernel_facts.keep_allocations("r8", "80", old, {key: (160, 0, 0, 0, b)}),
                          old)
-        for arch, new in (("80", {key: (162, 0, 0, 0, b)}), ("86", {key: (160, 0, 0, 0, b)}),
-                          ("80", {key: (160, 0, 0, 16, b)})):
+        # The same count, other loop counts: kept (#1226); another arch or another resource: written.
+        self.assertEqual(kernel_facts.keep_allocations("r8", "80", old, {key: (162, 0, 0, 0, b)}),
+                         old)
+        for arch, new in (("86", {key: (160, 0, 0, 0, b)}), ("80", {key: (160, 0, 0, 16, b)})):
             self.assertEqual(kernel_facts.keep_allocations("r8", arch, old, new), new, arch)
 
     def test_sm70_relocations_read_for_the_emulated_mma_families(self):

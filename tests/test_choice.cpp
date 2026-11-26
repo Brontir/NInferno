@@ -4798,7 +4798,18 @@ void kernel_cost_rebases_the_launch_share() {
     }
 }
 
+// Inkling 2's attention reads BF16 planes only: the choice offers no other KV codec, so an FP8
+// --kv-dtype is refused at the plan, not at the engine's load (PR 1226 review).
+void inkling2_keeps_bf16_kv() {
+    ch::ModelFacts model;
+    model.family       = "inkling2_text";
+    const auto allowed = ch::allowed_axes(model, KvCacheStorage::BFloat16);
+    check(allowed.kv.size() == 1 && allowed.kv[0] == KvCacheStorage::BFloat16,
+          "inkling2_text: BF16 KV alone");
+}
+
 int main() {
+    inkling2_keeps_bf16_kv();
     kernel_cost_rows_name_their_architecture();
     kernel_cost_rebases_the_launch_share();
     launch_rows_are_their_generations_census();

@@ -20,6 +20,7 @@ enum class StateFamily : std::uint8_t {
     DenseDecoder, // the dense decoder family (dense_decoder, moe_decoder: gpt-oss among them)
     Gemma4,       // Gemma 4 (gemma4_text)
     NemotronH,    // NemotronH hybrids (nemotron_h)
+    Inkling2,     // Inkling 2 (inkling2_text): a slot a visit of the looped schedule
 };
 
 // A DFlash drafter's own state: its full layers' paged KV and, per StateImage slot, its sliding
@@ -59,6 +60,9 @@ struct StateShape {
     std::int32_t key_heads         = 0;
     std::int32_t key_dim           = 0;
     std::int32_t conv_kernel       = 0;
+    // Inkling 2: the short convolutions' channels a visit slot (keys, values, the attention and
+    // the MoE outputs), each an FP32 history of three inputs; recurrent_layers counts the slots.
+    std::int32_t conv_channels = 0;
     // The Program's buffers: the residual width, the head's rows, the ids a request may carry.
     std::int32_t hidden        = 0;
     std::int32_t output_rows   = 0;

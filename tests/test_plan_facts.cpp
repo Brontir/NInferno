@@ -964,6 +964,64 @@ int nemotron_facts(const pr::PlanSourceFacts& f, const std::string& where) {
     return failures;
 }
 
+// Inkling 2 (inkling2_text, the converter's config): a state slot a visit of the looped schedule,
+// Inkling-2-Mini's 24 layers with the core [6, 18) run three times: 48 visits, 8 of them full
+// (layers 5 and 23 once, 11 and 17 three times), each with a convolution history of
+// 2 x 8 x 128 + 2 x 2304 = 6656 FP32 channels x 3.
+int inkling2() {
+    int failures = 0;
+    json types   = json::array();
+    for (int i = 0; i < 24; ++i) {
+        types.push_back(i % 6 == 5 ? "full_attention" : "sliding_attention");
+    }
+    const json config = {{"architectures", {"Inkling2LoopForCausalLM"}},
+                         {"model_type", "inkling2_text"},
+                         {"hidden_size", 2304},
+                         {"num_hidden_layers", 24},
+                         {"vocab_size", 201088},
+                         {"num_attention_heads", 16},
+                         {"num_key_value_heads", 8},
+                         {"head_dim", 128},
+                         {"sliding_window", 1024},
+                         {"max_position_embeddings", 262144},
+                         {"layer_types", types},
+                         {"loop_config", {{"core_start", 6}, {"core_end", 18}, {"num_passes", 3}}}};
+    const auto f      = pr::plan_facts_of_config(config, 1, rt::WeightBasis::Artifact);
+    failures += same(f.model.offline_reason, std::string(), "inkling2 plans");
+    failures += same(static_cast<int>(f.model.state.family),
+                     static_cast<int>(ninferno::models::StateFamily::Inkling2), "inkling2 family");
+    failures += same(f.model.state.full_layers, 8U, "inkling2 full visits");
+    failures += same(f.model.state.sliding_layers, 40U, "inkling2 sliding visits");
+    failures += same(f.model.state.recurrent_layers, 48U, "inkling2 convolution slots");
+    failures += same(f.model.state.conv_channels, 6656, "inkling2 convolution channels");
+    failures += same(f.model.state.kv_heads, 8, "inkling2 kv heads");
+    failures += same(f.model.state.window, 1024U, "inkling2 window");
+    failures += same(f.model.recurrent_conv_bytes, 48ULL * 3 * 6656 * 4, "inkling2 conv bytes");
+    // The same model from its GGUF header (llama.cpp's inkling2 keys).
+    json swa = json::array();
+    for (int i = 0; i < 24; ++i) { swa.push_back(i % 6 != 5); }
+    const json md = {{"general.architecture", "inkling2"},
+                     {"inkling2.block_count", 24},
+                     {"inkling2.context_length", 262144},
+                     {"inkling2.embedding_length", 2304},
+                     {"inkling2.vocab_size", 201088},
+                     {"inkling2.attention.head_count", 16},
+                     {"inkling2.attention.head_count_kv", 8},
+                     {"inkling2.attention.key_length", 128},
+                     {"inkling2.attention.value_length", 128},
+                     {"inkling2.attention.sliding_window", 1024},
+                     {"inkling2.attention.sliding_window_pattern", swa},
+                     {"inkling2.loop.start", 6},
+                     {"inkling2.loop.end", 18},
+                     {"inkling2.loop.count", 3}};
+    const auto g  = pr::plan_facts_of_gguf_metadata(md, 1);
+    failures += same(g.model.offline_reason, std::string(), "inkling2 gguf plans");
+    failures += same(g.model.state.full_layers, 8U, "inkling2 gguf full visits");
+    failures += same(g.model.state.sliding_layers, 40U, "inkling2 gguf sliding visits");
+    failures += same(g.model.state.conv_channels, 6656, "inkling2 gguf convolution channels");
+    return failures;
+}
+
 int nemotron_h() {
     int failures = 0;
     // mamba, attention, moe, mamba, attention, moe
@@ -1767,8 +1825,8 @@ int artifact_bank_formats() {
 
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
-                         nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
-                         artifact_expert_layers() + artifact_prefill_policy() +
+                         nemotron_h() + inkling2() + llama() + model_types() + boards() +
+                         artifact_errors() + artifact_expert_layers() + artifact_prefill_policy() +
                          gguf_linear_formats() + artifact_tensor_table() + table_counting() +
                          plan_device_error() + artifact_bank_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }

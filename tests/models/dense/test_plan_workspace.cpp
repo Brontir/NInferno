@@ -1,7 +1,8 @@
-// The plan without the weights for the dense decoder (dense_decoder, moe_decoder) and NemotronH
-// (#615 W3): --plan sizes the workspace with the start's own planner (target_workspace_plan, which
-// the start's execution sizes its arena with) over the model the artifact's directory describes
-// (Model::describe: the parameters load binds and prepares, without the payload or a device).
+// The plan without the weights for the dense decoder (dense_decoder, moe_decoder), NemotronH
+// (#615 W3) and Inkling 2: --plan sizes the workspace with the start's own planner
+// (target_workspace_plan, which the start's execution sizes its arena with) over the model the
+// artifact's directory describes (Model::describe: the parameters load binds and prepares, without
+// the payload or a device).
 //
 // Each case is a lab model's geometry as a converted artifact's directory (the converter's packing
 // or a GGUF's one-tensor-a-parent, its formats, the Uses with their policies) read by --plan's
@@ -33,6 +34,8 @@
 #include "core/weight_view.h"
 #include "models/dense/model.h"
 #include "models/dense/program_family.h"
+#include "models/inkling2/model.h"
+#include "models/inkling2/program_family.h"
 #include "models/nemotron_h/model.h"
 #include "models/nemotron_h/program_family.h"
 #include "models/qwen3_5/program/internal.h"
@@ -72,6 +75,7 @@ namespace art    = ninferno::artifact;
 namespace rt     = ninferno::runtime;
 namespace dense  = ninferno::models::dense;
 namespace nemo   = ninferno::models::nemotron_h;
+namespace ink    = ninferno::models::inkling2;
 
 int failures = 0;
 
@@ -429,6 +433,118 @@ art::Directory nemotron_directory(const art::Json& c, QType linear, QType expert
     return d.build();
 }
 
+// Inkling-2-Mini as its converter writes it (docs/maintainer/inkling2-model.md): 24 layers of 2304,
+// full attention at 5, 11, 17, 23, the rest a 1024 window, 24 query and 8 KV heads of 128, the
+// core [6, 18) run three times with rank-64 controllers, 128 experts of 1152 (8 routed).
+art::Json inkling2_mini() {
+    art::Json types = art::Json::array();
+    for (int i = 0; i < 24; ++i) {
+        types.push_back(i % 6 == 5 ? "full_attention" : "sliding_attention");
+    }
+    return {{"architectures", art::Json::array({"Inkling2LoopForCausalLM"})},
+            {"model_type", "inkling2_text"},
+            {"hidden_size", 2304},
+            {"num_hidden_layers", 24},
+            {"vocab_size", 201024},
+            {"unpadded_vocab_size", 200058},
+            {"max_position_embeddings", 262144},
+            {"num_attention_heads", 24},
+            {"num_key_value_heads", 8},
+            {"head_dim", 128},
+            {"sliding_window", 1024},
+            {"d_rel", 16},
+            {"rel_extent", 1024},
+            {"sconv_kernel_size", 4},
+            {"n_layers_per_attn_res_block", 6},
+            {"n_routed_experts", 128},
+            {"num_experts_per_tok", 8},
+            {"intermediate_size", 1152},
+            {"rms_norm_eps", 1e-5},
+            {"qk_l2_clip_threshold", 22.627},
+            {"rel_l2_clip_threshold", 8.0},
+            {"log_scaling_n_floor", 8192},
+            {"log_scaling_alpha", 0.1},
+            {"route_scale", 8.0},
+            {"mlp_gate_softcap", 4.0},
+            {"mlp_up_softcap", 25.0},
+            {"final_logit_softcapping", 30.0},
+            {"layer_types", types},
+            {"loop_config",
+             {{"core_start", 6}, {"core_end", 18}, {"num_passes", 3}, {"gate_rank", 64}}}};
+}
+
+// Inkling 2's directory, as models/inkling2/load.cpp binds it: `linear` projections and head, the
+// experts' gate_up and down one stacked parent each in `experts`, a BF16 router, FP32 tables.
+art::Directory inkling2_directory(const art::Json& c, QType linear, QType experts) {
+    DirectoryOf d(c);
+    const std::uint64_t h = c.at("hidden_size"), v = c.at("vocab_size"), dh = c.at("head_dim");
+    const std::uint64_t hq = c.at("num_attention_heads"), hkv = c.at("num_key_value_heads");
+    const std::uint64_t dr = c.at("d_rel"), e = c.at("n_routed_experts"),
+                        f = c.at("intermediate_size"), window = c.at("sliding_window"),
+                        extent     = c.at("rel_extent");
+    const auto& loop               = c.at("loop_config");
+    const std::uint64_t rank       = loop.at("gate_rank");
+    const std::uint64_t core_start = loop.at("core_start"), core_end = loop.at("core_end");
+    constexpr std::uint64_t taps = 4;
+    d.object(linear, h, {{"text/token_embedding", v, {}}});
+    d.direct("text/embedding_norm", {h});
+    d.object(linear, h, {{"text/output_head", v, {"text/final_hidden"}}});
+    d.direct("text/final_norm", {h});
+    d.direct("text/output_query", {1, h}, QType::FP32);
+    const auto& types = c.at("layer_types");
+    for (std::uint64_t i = 0; i < types.size(); ++i) {
+        const std::string p = "text/layers/" + std::to_string(i) + "/", a = p + "attention/";
+        const bool full = types[i] == "full_attention";
+        if (full) {
+            d.direct(p + "q_input_norm", {h});
+            d.direct(p + "k_input_norm", {h});
+            d.direct(p + "v_input_norm", {h});
+            d.object(linear, h, {{a + "key_taps", hkv * taps, {a + "key_input"}}});
+            d.object(linear, h, {{a + "value_taps", hkv * taps, {a + "value_input"}}});
+        } else {
+            d.direct(p + "input_norm", {h});
+        }
+        const std::vector<std::string> query_in{a + "query_input"};
+        d.object(linear, h, {{a + "query", hq * dh, query_in}});
+        d.object(linear, h, {{a + "key", hkv * dh, {a + "key_input"}}});
+        d.object(linear, h, {{a + "value", hkv * dh, {a + "value_input"}}});
+        d.object(linear, h, {{a + "gate", hq * dh, query_in}});
+        d.object(linear, h, {{a + "relative", dr * hq, query_in}});
+        d.object(linear, h, {{a + "sink", hq, query_in}});
+        d.object(linear, hq * dh, {{a + "output", h, {a + "context"}}});
+        d.direct(a + "query_clip", {hq, dh}, QType::FP32);
+        d.direct(a + "relative_clip", {hq, dr}, QType::FP32);
+        d.direct(a + "relative_bias", {full ? extent : window, dr}, QType::FP32);
+        d.direct(a + "key_conv", {hkv * dh, taps}, QType::FP32);
+        d.direct(a + "value_conv", {hkv * dh, taps}, QType::FP32);
+        d.direct(a + "output_conv", {h, taps}, QType::FP32);
+        d.direct(p + "moe/output_conv", {h, taps}, QType::FP32);
+        if (i > 0) { d.direct(p + "attention_query", {full ? 3U : 1U, h}, QType::FP32); }
+        d.direct(p + "ffn_query", {1, h}, QType::FP32);
+        d.direct(p + "ffn_norm", {h});
+        d.object(QType::BF16, h, {{p + "moe/router", e, {p + "moe/router_input"}}});
+        d.direct(p + "moe/selection_bias", {e}, QType::FP32);
+        std::vector<DirectoryOf::Member> gate_up, down;
+        for (std::uint64_t x = 0; x < e; ++x) {
+            const std::string ep = p + "moe/experts/" + std::to_string(x) + "/";
+            gate_up.push_back({ep + "gate_up", 2 * f, {p + "moe/expert_input"}});
+            down.push_back({ep + "down", h, {ep + "product"}});
+        }
+        d.object(experts, h, gate_up);
+        d.object(experts, f, down);
+        if (i >= core_start && i < core_end) {
+            d.direct(p + "loop/message_query", {4, h}, QType::FP32);
+            for (const char* role : {"q", "k", "v", "ffn"}) {
+                const std::string lp = p + "loop/" + role + "/";
+                d.object(linear, 2 * h, {{lp + "down", rank, {lp + "pair"}}});
+                d.object(linear, rank, {{lp + "gain", h, {lp + "low_rank"}}});
+                d.object(linear, rank, {{lp + "forget", h, {lp + "low_rank"}}});
+            }
+        }
+    }
+    return d.build();
+}
+
 DeviceClass board(std::uint32_t pci, int major, int minor, int sms, std::size_t l2_mib) {
     DeviceClass d = synthetic_device_class(pci, major, minor, sms, l2_mib << 20, 0);
     d.facts       = machine_facts_of(d);
@@ -459,13 +575,18 @@ detail::SequencePlanImpl plan_of(const EngineOptions& options, models::StateFami
 }
 
 // The start planner's arenas over the described model, as the start's execution sizes them
-// (DenseExecution / NemotronExecution::workspace_plan without a drafter or the MTP head).
+// (DenseExecution / NemotronExecution::workspace_plan without a drafter or the MTP head,
+// Inkling2Execution::workspace_plan).
 detail::WorkspacePlan start_plan(const art::Directory& directory, const EngineOptions& options,
                                  std::int32_t tokens, const detail::SequencePlanImpl& plan) {
     const bool exact = options.activations == ActivationMode::Exact;
     const ops::ScopedInvariantRoutes routes(exact);
     const std::string type =
         directory.components.at("text").config.value("model_type", std::string());
+    if (type == "inkling2_text") {
+        const auto model = ink::Model::describe(directory);
+        return ink::target_workspace_plan(*model, tokens, plan);
+    }
     if (type == "nemotron_h") {
         const auto model = nemo::Model::describe(
             directory, exact ? nemo::ActivationProfile::A16 : nemo::ActivationProfile::Artifact);
@@ -474,6 +595,13 @@ detail::WorkspacePlan start_plan(const art::Directory& directory, const EngineOp
     const auto model = dense::Model::describe(
         directory, exact ? dense::ActivationProfile::A16 : dense::ActivationProfile::Artifact);
     return dense::target_workspace_plan(*model, tokens, plan);
+}
+
+// The family whose planner lays the rung's sequence plan out.
+models::StateFamily family_of(const rt::PlanModelFacts& facts) {
+    if (facts.model_type == "nemotron_h") { return models::StateFamily::NemotronH; }
+    if (facts.model_type == "inkling2_text") { return models::StateFamily::Inkling2; }
+    return models::StateFamily::DenseDecoder;
 }
 
 std::string bytes(const detail::WorkspacePlan& p) {
@@ -511,9 +639,7 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
              const art::Directory& directory, const EngineOptions& options,
              const DeviceClass& device) {
     const ScopedDeviceClass substitute(device);
-    const auto family = facts.model_type == "nemotron_h" ? models::StateFamily::NemotronH
-                                                         : models::StateFamily::DenseDecoder;
-    const auto plan   = plan_of(options, family, facts.native_context, device.sms);
+    const auto plan = plan_of(options, family_of(facts), facts.native_context, device.sms);
     rt::PlanRung rung;
     rung.max_context   = options.max_context;
     rung.prefill_chunk = options.prefill_chunk;
@@ -554,11 +680,9 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
 std::string basis_of(const rt::PlanModelFacts& facts, const EngineOptions& options,
                      const DeviceClass& device) {
     const ScopedDeviceClass substitute(device);
-    const auto family     = facts.model_type == "nemotron_h" ? models::StateFamily::NemotronH
-                                                             : models::StateFamily::DenseDecoder;
     EngineOptions planned = options;
     planned.speculative   = {};
-    const auto plan       = plan_of(planned, family, facts.native_context, device.sms);
+    const auto plan       = plan_of(planned, family_of(facts), facts.native_context, device.sms);
     rt::PlanRung rung;
     rung.max_context   = options.max_context;
     rung.prefill_chunk = options.prefill_chunk;
@@ -669,6 +793,51 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
                     "a model without a full-attention layer");
         }
     }
+    rt::PlanModelFacts bare = facts;
+    bare.artifact_directory.reset();
+    refuses(basis_of(bare, options, device), "artifact", "facts without the directory");
+}
+
+// Inkling 2's declines: the options its start refuses (int8 activations, a narrow state, Vision,
+// speculation), a pin, the tokenizer, the directory.
+void inkling2_declines(const rt::PlanModelFacts& facts, const DeviceClass& device) {
+    const std::string name      = "Inkling-2-Mini";
+    const EngineOptions options = options_of(32768, 2048, 1);
+    const auto refuses          = [&](const std::string& basis, const std::string& why,
+                             const std::string& what) {
+        check(basis.rfind("formula: ", 0) == 0 && basis.find(why) != std::string::npos,
+                       name + ": " + what + " keeps the formula (" + basis + ")");
+    };
+    const std::string answered = basis_of(facts, options, device);
+    if (!own_tile(device)) {
+        check_refused_other_arch(name, answered);
+        return;
+    }
+    check(answered.rfind("start", 0) == 0,
+          name + ": the query answers at the decline cases' options (" + answered + ")");
+    rt::PlanModelFacts unread = facts;
+    unread.tokenizer_tokens   = 0;
+    refuses(basis_of(unread, options, device), "tokenizer", "without the tokenizer's ids, it");
+    // The start's bound is the vocabulary (unpadded_vocab_size), below the head's padded rows: one
+    // id past it is refused.
+    rt::PlanModelFacts wide = facts;
+    wide.tokenizer_tokens   = inkling2_mini().at("unpadded_vocab_size").get<std::uint32_t>() + 1;
+    refuses(basis_of(wide, options, device), "vocabulary", "a tokenizer wider than the vocabulary");
+    refuses(basis_of(facts, options_of(32768, 2048, 1, ActivationMode::Int8), device), "int8",
+            "--activations int8");
+    EngineOptions narrow   = options;
+    narrow.recurrent_state = RecurrentStateStorage::BF16;
+    refuses(basis_of(facts, narrow, device), "--state-dtype", "--state-dtype bf16");
+    EngineOptions vision = options;
+    vision.enable_vision = true;
+    refuses(basis_of(facts, vision, device), "Vision", "Vision");
+    EngineOptions pinned       = options;
+    pinned.maintainer.moe_path = MoePath::Generic;
+    refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
+    EngineOptions speculative            = options;
+    speculative.speculative.backend      = SpeculativeBackend::Mtp;
+    speculative.speculative.draft_tokens = 3;
+    refuses(basis_of(facts, speculative, device), "speculative", "speculation");
     rt::PlanModelFacts bare = facts;
     bare.artifact_directory.reset();
     refuses(basis_of(bare, options, device), "artifact", "facts without the directory");
@@ -800,7 +969,16 @@ int main() {
         const auto nemotron = [] {
             return nemotron_directory(nemotron_nano(), QType::Q8_G32_FP16, QType::Q8_G32_FP16);
         };
+        const auto inkling = [] {
+            return inkling2_directory(inkling2_mini(), QType::Q8_G32_FP16, QType::Q8_G32_FP16);
+        };
         const std::vector<Case> cases = {
+            {"Inkling-2-Mini Q8_0, RTX 4070 Ti, ctx 32k, chunk 1024, 1 stream", inkling, 200058,
+             rtx4070ti, options_of(32768, 1024, 1)},
+            {"Inkling-2-Mini Q8_0, RTX 5090, ctx 64k, chunk 4096, 4 streams", inkling, 200058,
+             rtx5090, options_of(65536, 4096, 4)},
+            {"Inkling-2-Mini Q8_0, RTX 4060 Ti, exact, ctx 16k, chunk 1024, 1 stream", inkling,
+             200058, rtx4060ti, options_of(16384, 1024, 1, ActivationMode::Exact)},
             {"Qwen3-8B Q4_K_M, RTX 4060 Ti, ctx 32k, chunk 2048, 1 stream", qwen3, 151669,
              rtx4060ti, options_of(32768, 2048, 1)},
             {"Qwen3-8B Q4_K_M, RTX 5090, ctx 40k, chunk 4096, 4 streams", qwen3, 151669, rtx5090,
@@ -835,6 +1013,14 @@ int main() {
             rt::PlanModelFacts facts = product::plan_facts_of_directory(directory, name).model;
             facts.tokenizer_tokens   = tokens;
             declines(name, facts, directory, rtx4070ti, backend);
+        }
+
+        {
+            const art::Directory directory = inkling();
+            rt::PlanModelFacts facts =
+                product::plan_facts_of_directory(directory, "Inkling-2-Mini").model;
+            facts.tokenizer_tokens = 200058;
+            inkling2_declines(facts, rtx4070ti);
         }
 
         real_artifacts({{"RTX 5090", rtx5090}, {"RTX 4070 Ti", rtx4070ti}});
