@@ -818,22 +818,25 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
         std::max(0.0, pipe(r, &PipeCounts::sb_waits_global) - peak * slices / trips);
     const double n_ld = loop_i(r, &LoopCounts::ldg) + loop_i(r, &LoopCounts::ld);
     const double load_bytes =
-        (loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes)) / std::max(n_ld, 1.0);
+        (loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes)) /
+        std::max(n_ld, 1.0);
     const double act = static_cast<double>(T) * k * 36.0 / 32.0; // the q8_1 activation
     const double rb  = k * bits / 8.0; // a row's bytes in 128-B L1 lines, one more where unaligned
-    const double row_lines = (std::ceil(rb / 128.0) + (std::fmod(rb, 128.0) != 0.0 ? 1.0 : 0.0)) * 128.0;
+    const double row_lines =
+        (std::ceil(rb / 128.0) + (std::fmod(rb, 128.0) != 0.0 ? 1.0 : 0.0)) * 128.0;
     const auto rnd = [&](double nc) {
         const double d   = nc * bg / c.bus;
         const double cps = std::ceil(nc / c.sms);
-        double sm        = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot,
-                                   o_stall, trips, cps, k / 1024.0, bw, ld, kVecWarps, 0.0);
+        double sm = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot, o_stall,
+                            trips, cps, k / 1024.0, bw, ld, kVecWarps, 0.0);
         // The SM's L2 link carries every resident warp's trip bytes and, where the rows its CTAs
         // keep open and the activation exceed L1, the re-reads: the share of them past the bytes
         // the SM keeps in flight at a linear rate (ring_free) queues there.
         const double opn = cps * bg / rb * row_lines;
         double reread    = opn + act > c.l1 ? excess * load_bytes : 0.0;
         reread *= std::max(0.0, 1.0 - c.ring_free / (cps * kVecWarps * bw));
-        sm = std::max(sm, cps * kVecWarps * trips * (bw * slices / trips + reread) / (c.l2bpc * c.clk));
+        sm = std::max(sm,
+                      cps * kVecWarps * trips * (bw * slices / trips + reread) / (c.l2bpc * c.clk));
         return combine(s.vec_form, sm, d);
     };
     return launch_ns(c, s, L->ctas) + launch_ns(c, s, std::ceil(k / 256.0) * T) +
