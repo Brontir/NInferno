@@ -1704,6 +1704,19 @@ REGISTER_ALLOCATIONS = {
 }
 
 
+# Counted rows (REGISTER_ALLOCATIONS) for which ptxas also makes two schedules at one register
+# count, the loop counts moving with them: sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77 registers,
+# outside the K loop 1086 total / 3361 stall clocks in an RTX 4090 stand's ninferno-serve build and
+# 734 / 2465 in an RTX 4070 Ti stand's full build of the same device source (#1226, nvcc 13.4.92).
+# check and extract treat such a pair as the allocations above; every other counted row is held
+# exact at one count.
+SCHEDULES_AT_ONE_COUNT = {
+    "moegemm": {
+        "89": {("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)},
+    },
+}
+
+
 def keep_allocations(family, arch, old, new):
     """`new`, the rows of a build, with each row that differs from the section's (`old`) only by
     an allocation ptxas makes either way (register_unstable) taken from the section as it is: a
@@ -1739,9 +1752,13 @@ def register_unstable(family, arch, key, expected, got):
     either way (REGISTER_ALLOCATIONS): registers both among the counted ones, the other resources
     equal."""
     allowed = REGISTER_ALLOCATIONS.get(family, {}).get(arch, {}).get(tuple(key))
-    # Another allocation only: at one register count the row is held exact, loop counts too.
-    return (allowed is not None and expected[0] != got[0] and expected[0] in allowed and
-            got[0] in allowed and expected[1:4] == got[1:4])
+    # Another allocation only: at one register count the row is held exact, loop counts too,
+    # except the rows SCHEDULES_AT_ONE_COUNT lists (two schedules seen at one count).
+    if allowed is None or expected[1:4] != got[1:4] or got[0] not in allowed:
+        return False
+    if expected[0] != got[0]:
+        return expected[0] in allowed
+    return tuple(key) in SCHEDULES_AT_ONE_COUNT.get(family, {}).get(arch, set())
 
 
 def section_line(family):

@@ -1405,6 +1405,31 @@ class RegisterAllocations(unittest.TestCase):
                     {key: (lo, 0, 0, 0, b)}, False, with_sass, arch)
             self.assertEqual(got, want, with_sass)
 
+    def test_two_schedules_at_one_count_pass_where_counted(self):
+        # #1226: sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 came out with two schedules at 77
+        # registers (SCHEDULES_AT_ONE_COUNT): another loop at that count passes check and keeps the
+        # section's row on extract; the same at a row not listed is still a failure.
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        key = ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)
+        self.assertIn(key, kernel_facts.SCHEDULES_AT_ONE_COUNT["moegemm"]["89"])
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1086, 734
+
+        def check(k, at="89"):
+            section = {"rows": {k: (77, 0, 0, 0, a)}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "moegemm", section, {k: (77, 0, 0, 0, b)},
+                                                  False, True, at)
+
+        self.assertEqual(check(key), 0)
+        self.assertEqual(check(key, "86"), 1)
+        self.assertEqual(check(("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2)), 1)
+        old = {key: (77, 0, 0, 0, a)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "89", old, {key: (77, 0, 0, 0, b)}),
+                         old)
+
     def test_a_section_of_other_columns_keeps_nothing(self):
         data = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "data" /
                 "kernel_facts")
