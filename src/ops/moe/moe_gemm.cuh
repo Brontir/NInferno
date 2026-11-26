@@ -48,8 +48,11 @@ __device__ __forceinline__ float moe_sigmoid(float v) { return 1.0F / (1.0F + ex
 // activations' kernels keep their code: every expert kernel holds every case of the switch below,
 // and the kernel facts count the code outside the K loop over all of them (sass_counts: a callee is
 // not counted). Inlined, its two tanhf raised every MoE kernel's outside stall 10-40 % and moved
-// sealed routes/moe_pick bands of models that never call it (#1226). Its own calls pay one call and
-// return an output value, beside two tanhf.
+// sealed routes/moe_pick bands of models that never call it (#1226). Out of line, the call site and
+// the registers saved around it still count: on sm_86 a GateUp kernel's outside stall is ~7.8 %
+// above the pre-Situ facts (GgmlQ6KDecoder 1x4: 2817 -> 3037), no sealed band moves, and the other
+// activations' executed path is as before (the static sum over every case is #1209's to replace).
+// Its own calls pay one call and return an output value, beside two tanhf.
 static __device__ __noinline__ float moe_situ(float g, float u, float alpha, float limit) {
     return alpha * tanhf(g / alpha) * (1.0F / (1.0F + expf(-g))) * (limit * tanhf(u / limit));
 }

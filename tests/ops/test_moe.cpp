@@ -1433,6 +1433,16 @@ Case inkling2_like() {
     return c;
 }
 
+// The same bank with caps small enough that both soft caps saturate on the case's gate and up
+// values (alpha 0.5, limit 1.5, unequal): a swapped alpha and limit, or a dropped cap, misses.
+Case inkling2_capped() {
+    Case c         = inkling2_like();
+    c.label        = "inkling2-like nvfp4 E128 k8 situ capped";
+    c.config.alpha = 0.5F;
+    c.config.limit = 1.5F;
+    return c;
+}
+
 Case qwen3_like() {
     Case c;
     c.label = "qwen3-moe-like nvfp4 E128 k8";
@@ -2269,6 +2279,7 @@ int main(int argc, char** argv) {
                 }
             }
             failures += check_case(inkling2_like(), 79U, {1, 2, 4, 8, 17, 200});
+            failures += check_case(inkling2_capped(), 80U, {1, 4, 17});
             {
                 const Case c = oss_like();
                 failures += check_case(c, 77U, {1, 4, 17, 200});
