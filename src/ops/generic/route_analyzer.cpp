@@ -1,6 +1,8 @@
 // The route analyzer (route_analyzer.h). Every formula is tools/route_pick/analyzer.py's, term
 // for term, so ninferno_route_analyzer_parity_test can hold the two equal; the comments name the
 // source each input mirrors.
+#include <cstdio>
+#include <cstdlib>
 #include "ops/generic/route_analyzer.h"
 
 #include "core/arch_registry.h"
@@ -823,8 +825,13 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
                                      o_stall, trips, cps, k / 1024.0, bw, ld, kVecWarps, wait);
         return combine(s.vec_form, sm, d);
     };
-    return launch_ns(c, s, L->ctas) + launch_ns(c, s, std::ceil(k / 256.0) * T) +
+    const double res = launch_ns(c, s, L->ctas) + launch_ns(c, s, std::ceil(k / 256.0) * T) +
            second_kernel(c, s) + c.l0 + (rounds - 1) * rnd(L->ctas) + rnd(last);
+    if (std::getenv("NINF_DBG") && c.sms == 82 && ep == Epilogue::SwiGlu)
+        std::fprintf(stderr, "DBGVEC n %g k %d T %d ctas %d groups %d trips %g tot %g stall %g o_tot %g o_stall %g ld %g bw %g wait %g peak %g sbw %g price %g l0 %g
+",
+                     n, k, T, L->ctas, L->groups, trips, tot, stall, o_tot, o_stall, ld, bw, wait, peak, pipe(r, &PipeCounts::sb_waits_global), res, c.l0);
+    return res;
 }
 
 std::optional<double> price_vec_mma(const Card& c, const Settings& s, QType q, Epilogue ep,
