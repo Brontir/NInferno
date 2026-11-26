@@ -199,6 +199,9 @@ int route_tune_main(int argc, char** argv) {
             throw std::invalid_argument("--prefill-only 1 and --decode-only 1 exclude each other");
         }
         const bool rotate       = !(opt.count("--rotate") && opt["--rotate"] == "0");
+        // lab (round 28 smch probe): --l2-resident 1 times a decode call as 64 consecutive calls on
+        // ONE weight copy (L2-resident after the first), so the time is launch + the SM side.
+        const int l2_reps = opt.count("--l2-resident") && opt["--l2-resident"] == "1" ? 64 : 0;
         if (opt.count("--group-sums-plane") && opt["--group-sums-plane"] == "1") {
             generic::set_group_sums_plane_enabled(true);
         }
@@ -522,18 +525,22 @@ int route_tune_main(int argc, char** argv) {
                 // The GPU waits while the host enqueues the sample (20 us a call), so a sample of
                 // short calls times the kernels and not the host's launch rate. Launch overlap
                 // between the calls is the stream's front end only: the tuner sets no PDL joins.
-                timer.set_lead_us(over_copies && !spare.empty() ? 20.0 * (1 + spare.size()) : 0.0);
+                timer.set_lead_us(over_copies && l2_reps > 0 ? 20.0 * l2_reps
+                                  : over_copies && !spare.empty() ? 20.0 * (1 + spare.size()) : 0.0);
                 const double us =
                     timer.median_us([&](cudaStream_t s) {
                         call.weight = &w.weight;
                         generic::run_route(r, call, &workspace, s);
                         if (!over_copies) return;
+                        for (int i = 1; i < l2_reps; ++i) generic::run_route(r, call, &workspace, s);
+                        if (l2_reps > 0) return;
                         for (const RandomWeight& c : spare) {
                             call.weight = &c.weight;
                             generic::run_route(r, call, &workspace, s);
                         }
                     }) /
-                    static_cast<double>(over_copies ? 1 + spare.size() : 1);
+                    static_cast<double>(over_copies && l2_reps > 0 ? l2_reps
+                                        : over_copies ? 1 + spare.size() : 1);
                 if (routes_csv &&
                     written.insert({static_cast<int>(r.family) * 256 + r.schedule, t}).second) {
                     routes_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
@@ -579,10 +586,11 @@ int route_tune_main(int argc, char** argv) {
                     // has no flush buffer (#574); the median of `samples` of them.
                     const bool rotated = over_copies && !spare.empty();
                     routes_csv << ',' << run_id << ',' << device_id << ','
-                               << (rotated           ? "copies"
+                               << (over_copies && l2_reps > 0 ? "l2hot"
+                                   : rotated           ? "copies"
                                    : timer.flushes() ? "flushed"
                                                      : "warm")
-                               << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
+                               << ',' << (over_copies && l2_reps > 0 ? std::size_t(l2_reps) : rotated ? 1 + spare.size() : std::size_t{1}) << ','
                                << samples << ',' << pci_id << ',';
                     // The launch the route makes for this call: its CTAs and threads per CTA
                     // (ggml's vector kernel: its first kVecMaxColumns tokens, its matrix kernel one
