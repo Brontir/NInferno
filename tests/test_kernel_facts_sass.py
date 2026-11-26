@@ -262,6 +262,19 @@ class LoopFinder(unittest.TestCase):
                  (0x040, "FADD R36, R36, R30 ;"), (0x050, "EXIT ;"), (0x060, "FADD R36, R36, R30 ;"),
                  (0x070, "BRA 0x040 ;")]]
         self.assertTrue(sc.tail_reached(body_of(live), 5))
+        # A runtime-mask shuffle: BRA.CONV, its fall-through MOV and the CALL of the callee after
+        # the last EXIT (ptxas, sm_75 / sm_86): the callee is reached.
+        conv = body_of([(0x000, "BRA.CONV 0x030 ;"), (0x010, "MOV R2, 0x40 ;"),
+                        (0x020, "CALL.REL.NOINC 0x060 ;"), (0x030, "BRXU UR4 -0x40 ;"),
+                        (0x040, "FADD R36, R36, R30 ;"), (0x050, "EXIT ;"),
+                        (0x060, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x070, "RET.REL.NODEC R20 0x0 ;")])
+        self.assertTrue(sc.tail_reached(conv, 5))
+        # A case between the switch and the EXIT, entered by the jump table alone, that calls a
+        # callee after the EXIT: the switch enters it, so its CALL reaches the callee.
+        case_call = body_of([(0x000, "MOV R1, R2 ;"), (0x010, "BRXU UR4 -0x20 ;"), (0x020, "EXIT ;"),
+                             (0x030, "CALL.REL.NOINC 0x060 ;"), (0x040, "BRA 0x050 ;"), (0x050, "EXIT ;"),
+                             (0x060, "FADD R36, R36, R30 ;"), (0x070, "RET.REL.NODEC R20 0x0 ;")])
+        self.assertTrue(sc.tail_reached(case_call, 5))
         # tail_reached follows successors' edges: a callee's branch with a predicate operand, a
         # guarded RET and an unguarded BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
         # code after an unguarded KILL is entered by nothing.

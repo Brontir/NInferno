@@ -372,7 +372,10 @@ def tail_reached(body, last_exit):
             m = TARGET.search(operands)
             target = int(m.group(1), 16) if m else None
         if base in ("BRA", "JMP"):
-            falls = branch_edges(guarded, opcode, operands)[1]
+            # BRA.CONV (a runtime-mask shfl / warpsync: ptxas falls through to the CALL of its
+            # callee after the last EXIT) may fall through, though branch_edges calls it
+            # unconditional (#1241); counted so here only, the loop counts keep successors' view.
+            falls = branch_edges(guarded, opcode, operands)[1] or opcode.startswith("BRA.CONV")
         else:
             falls = not (base.startswith(("BRX", "JMX")) or (base in ("EXIT", "RET", "KILL") and not guarded))
         return target, falls
