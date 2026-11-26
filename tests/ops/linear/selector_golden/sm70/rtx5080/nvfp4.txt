@@ -13,8 +13,7 @@ nvfp4 p0 swiglu 128x2048 speed T=17..2048 rmma.m1.n4.w1x8 ws=0
 nvfp4 p0 swiglu 128x2048 prefill T=17..2048 rmma.m1.n4.w1x8 ws=0
 nvfp4 p0 swiglu 128x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p0 swiglu 128x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p1 store 256x2048 speed T=1 r8.w4r1 ws=0
-nvfp4 p1 store 256x2048 speed T=2..16 rmma.m1.n1.w1x16 ws=0
+nvfp4 p1 store 256x2048 speed T=1..16 rmma.m1.n1.w1x16 ws=0
 nvfp4 p1 store 256x2048 speed T=17 w4a8.32x128 ws=43520
 nvfp4 p1 store 256x2048 speed T=24 w4a8.32x128 ws=61440
 nvfp4 p1 store 256x2048 speed T=32 w4a8.32x128 ws=81920
@@ -41,8 +40,7 @@ nvfp4 p1 store 256x2048 prefill T=1024 w4a8.64x64 ws=2621440
 nvfp4 p1 store 256x2048 prefill T=2048 w4a8.64x64 ws=5242880
 nvfp4 p1 store 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p1 store 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p1 add 256x2048 speed T=1 r8.w4r1 ws=0
-nvfp4 p1 add 256x2048 speed T=2..16 rmma.m1.n1.w1x16 ws=0
+nvfp4 p1 add 256x2048 speed T=1..16 rmma.m1.n1.w1x16 ws=0
 nvfp4 p1 add 256x2048 speed T=17 w4a8.32x128 ws=43520
 nvfp4 p1 add 256x2048 speed T=24 w4a8.32x128 ws=61440
 nvfp4 p1 add 256x2048 speed T=32 w4a8.32x128 ws=81920
@@ -69,8 +67,7 @@ nvfp4 p1 add 256x2048 prefill T=1024 w4a8.64x64 ws=2621440
 nvfp4 p1 add 256x2048 prefill T=2048 w4a8.64x64 ws=5242880
 nvfp4 p1 add 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p1 add 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p1 swiglu 128x2048 speed T=1 r8.w4r1 ws=0
-nvfp4 p1 swiglu 128x2048 speed T=2..16 rmma.m1.n1.w1x16 ws=0
+nvfp4 p1 swiglu 128x2048 speed T=1..16 rmma.m1.n1.w1x16 ws=0
 nvfp4 p1 swiglu 128x2048 speed T=17 w4a8.32x128 ws=43520
 nvfp4 p1 swiglu 128x2048 speed T=24 w4a8.32x128 ws=61440
 nvfp4 p1 swiglu 128x2048 speed T=32 w4a8.32x128 ws=81920
@@ -1125,7 +1122,7 @@ nvfp4 p2 swiglu 8704x5120 prefill T=1024 w4a8.64x64 ws=6553600
 nvfp4 p2 swiglu 8704x5120 prefill T=2048 w4a8.64x64 ws=13107200
 nvfp4 p2 swiglu 8704x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p2 swiglu 8704x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p0 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+nvfp4 p0 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 nvfp4 p0 store 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 nvfp4 p0 store 5120x17408 speed T=17..64 rmma.m1.n4.w4x1 ws=0
 nvfp4 p0 store 5120x17408 speed T=96..2048 rmma.m1.n8.w4x1 ws=0
@@ -1133,7 +1130,7 @@ nvfp4 p0 store 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 nvfp4 p0 store 5120x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 nvfp4 p0 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p0 store 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p0 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+nvfp4 p0 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 nvfp4 p0 add 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 nvfp4 p0 add 5120x17408 speed T=17..64 rmma.m1.n4.w4x1 ws=0
 nvfp4 p0 add 5120x17408 speed T=96..2048 rmma.m1.n8.w4x1 ws=0
@@ -1147,8 +1144,7 @@ nvfp4 p0 swiglu 2560x17408 speed T=17..2048 rmma.m1.n4.w1x8 ws=0
 nvfp4 p0 swiglu 2560x17408 prefill T=17..2048 rmma.m1.n4.w1x8 ws=0
 nvfp4 p0 swiglu 2560x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p0 swiglu 2560x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p1 store 5120x17408 speed T=1 r8.w8r2 ws=0
-nvfp4 p1 store 5120x17408 speed T=2..8 rmma.m1.n1.w1x8 ws=0
+nvfp4 p1 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 nvfp4 p1 store 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 nvfp4 p1 store 5120x17408 speed T=17 w4a8.32x128 ws=370048
 nvfp4 p1 store 5120x17408 speed T=24 w4a8.32x128 ws=522240
@@ -1176,8 +1172,7 @@ nvfp4 p1 store 5120x17408 prefill T=1024 w4a8.64x64 ws=22282240
 nvfp4 p1 store 5120x17408 prefill T=2048 w4a8.64x64 ws=44564480
 nvfp4 p1 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 nvfp4 p1 store 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-nvfp4 p1 add 5120x17408 speed T=1 r8.w8r2 ws=0
-nvfp4 p1 add 5120x17408 speed T=2..8 rmma.m1.n1.w1x8 ws=0
+nvfp4 p1 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 nvfp4 p1 add 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 nvfp4 p1 add 5120x17408 speed T=17 w4a8.32x128 ws=370048
 nvfp4 p1 add 5120x17408 speed T=24 w4a8.32x128 ws=522240
