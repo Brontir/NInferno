@@ -14,6 +14,9 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/kernel_facts.h"
 
+#include <algorithm>
+#include <cstdlib>
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -359,7 +362,30 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
                     (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta);
     if (grid.y > kMaxGridYZ)
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
-    const auto smem = static_cast<std::size_t>(args.spread_smem);
+    auto smem = static_cast<std::size_t>(args.spread_smem);
+    // LAB (#1199, not for merge): NINFERNO_LAB_RMMA_CAP_WARPS=W holds the launch to
+    // max(W / warps a CTA, 1) CTAs a SM by dynamic shared memory sized against the kernel's own.
+    static const int lab_cap = [] {
+        const char* v = std::getenv("NINFERNO_LAB_RMMA_CAP_WARPS");
+        return v != nullptr ? std::atoi(v) : 0;
+    }();
+    if (lab_cap > 0 && kernel_describe_target() == nullptr) {
+        const int want = std::max(lab_cap / (Schedule::kThreads / 32), 1);
+        cudaFuncAttributes fa{};
+        int dev = 0, smem_sm = 0, reserved = 0;
+        CUDA_CHECK(cudaFuncGetAttributes(&fa, rmma_kernel<Decoder, Schedule, E, Latency, Sums>));
+        CUDA_CHECK(cudaGetDevice(&dev));
+        CUDA_CHECK(cudaDeviceGetAttribute(&smem_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev));
+        CUDA_CHECK(cudaDeviceGetAttribute(&reserved, cudaDevAttrReservedSharedMemoryPerBlock, dev));
+        const long per_cta = smem_sm / (want + 1) + 1 - reserved;
+        const long dyn     = per_cta - static_cast<long>(fa.sharedSizeBytes);
+        if (dyn > static_cast<long>(smem)) {
+            smem = static_cast<std::size_t>(dyn);
+            CUDA_CHECK(cudaFuncSetAttribute(rmma_kernel<Decoder, Schedule, E, Latency, Sums>,
+                                            cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                            static_cast<int>(smem)));
+        }
+    }
     if (KernelResources* described = kernel_describe_target()) {
         // The kernel's committed facts (the cost model describes up to 20 schedules a call: one
         // snapshot read per instance and device). Without them nothing is described: the caller
