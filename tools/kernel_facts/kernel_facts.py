@@ -1708,11 +1708,11 @@ REGISTER_ALLOCATIONS = {
 # count, the loop counts moving with them: sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77 registers,
 # outside the K loop 1086 total / 3361 stall clocks in an RTX 4090 stand's ninferno-serve build and
 # 734 / 2465 in an RTX 4070 Ti stand's full build of the same device source (#1226, nvcc 13.4.92).
-# check and extract treat such a pair as the allocations above; every other counted row is held
-# exact at one count.
+# check and extract treat such a pair, at the listed count only, as the allocations above; every
+# other counted row, and a listed row at another count, is held exact at one count.
 SCHEDULES_AT_ONE_COUNT = {
     "moegemm": {
-        "89": {("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3)},
+        "89": {("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): 77},
     },
 }
 
@@ -1758,7 +1758,7 @@ def register_unstable(family, arch, key, expected, got):
         return False
     if expected[0] != got[0]:
         return expected[0] in allowed
-    return tuple(key) in SCHEDULES_AT_ONE_COUNT.get(family, {}).get(arch, set())
+    return SCHEDULES_AT_ONE_COUNT.get(family, {}).get(arch, {}).get(tuple(key)) == got[0]
 
 
 def section_line(family):
@@ -1788,9 +1788,14 @@ def check_section(args, family, section, got, other_nvcc, with_sass, arch):
         print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section, a row "
               f"ptxas does not reproduce (#968), resources equal: not a failure")
     for k in allocated:
-        print(f"kernel_facts: {family} {row_key(k)}: {got[k][0]} registers against the section's "
-              f"{expected[k][0]}, both allocations ptxas makes of this source (#968, "
-              f"REGISTER_ALLOCATIONS): not a failure")
+        if got[k][0] == expected[k][0]:
+            print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section at "
+                  f"{got[k][0]} registers, both schedules ptxas makes of this source at that count "
+                  f"(#1226, SCHEDULES_AT_ONE_COUNT): not a failure")
+        else:
+            print(f"kernel_facts: {family} {row_key(k)}: {got[k][0]} registers against the section's "
+                  f"{expected[k][0]}, both allocations ptxas makes of this source (#968, "
+                  f"REGISTER_ALLOCATIONS): not a failure")
     if not (missing or extra or differ):
         if other_nvcc:
             print(f"kernel_facts: {len(got)} {family} kernels of sm_{arch}: the set equals "
