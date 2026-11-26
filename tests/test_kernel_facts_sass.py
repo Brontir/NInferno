@@ -246,10 +246,10 @@ class LoopFinder(unittest.TestCase):
         self.assertIsNone(sc.switch_targets(body, i))
         self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
         # tail_reached follows successors' edges: a callee's branch with a predicate operand, a
-        # guarded RET and BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
+        # guarded RET and an unguarded BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
         # code after an unguarded KILL is entered by nothing.
         callee = [(0x500, "BRA.U !UP0, 0x520 ;"), (0x510, "FADD R36, R36, R30 ;"),
-                  (0x520, "@P1 RET.REL.NODEC R20 0x0 ;"), (0x530, "@!P5 BRA.DIV 0x550 ;"),
+                  (0x520, "@P1 RET.REL.NODEC R20 0x0 ;"), (0x530, "BRA.DIV ~URZ, 0x550 ;"),
                   (0x540, "RET.REL.NODEC R20 0x0 ;"), (0x550, "RET.REL.NODEC R20 0x0 ;"),
                   (0x560, "BRA 0x560 ;"), (0x570, "NOP ;"), (0x580, "NOP ;")]
         tail = [l for l in lines if l[0] < 0x500] + callee

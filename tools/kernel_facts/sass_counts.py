@@ -357,10 +357,14 @@ def tail_reached(body, last_exit):
     the fall-through of a reached instruction there. A jump-table case placed after that EXIT
     would be entered only by the table, so switch_targets would leave it out of the counts
     silently (#1231); such an instruction makes the flow unknown instead. NOPs (the closing
-    padding) are exempt."""
+    padding) are exempt. The fall-through follows successors (branch_edges); an indirect branch
+    in the tail ends the run (successors would give it switch targets), which errs toward
+    unknown flow."""
     explicit = set()
-    for _, _, opcode, operands, *_ in body:
-        if base_opcode(opcode) in ("BRA", "JMP", "CALL"):
+    for _, guarded, opcode, operands, *_ in body:
+        base = base_opcode(opcode)
+        taken = base in ("BRA", "JMP") and branch_edges(guarded, opcode, operands)[0]
+        if base == "CALL" or taken:
             m = TARGET.search(operands)
             if m:
                 explicit.add(int(m.group(1), 16))
@@ -373,7 +377,8 @@ def tail_reached(body, last_exit):
         if opcode in ("BRA", "JMP"):
             # successors' fall-through: a guard, a predicate operand (BRA.U !UP0), BRA.DIV
             reached = reached and branch_edges(guarded, body[k][2], body[k][3])[1]
-        elif opcode.startswith(("BRX", "JMX")) or (opcode in ("EXIT", "RET", "KILL") and not guarded):
+        elif opcode.startswith(("BRX", "JMX")) or (
+                opcode in ("EXIT", "RET", "KILL") and not guarded):
             reached = False
     return True
 
