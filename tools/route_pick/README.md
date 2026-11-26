@@ -54,7 +54,16 @@ prefill call and a list with no admitted route fall through to the older authori
 end against master): AD102 (rmma priced 12-16 % below its time at T 2-4, #1211), AD106 / GA106 (w2x2 priced 8-19 %
 above its time, w1x8 1-18 % below, the wave term of #1224; Qwen3.5-9B Q4_K_M at C 5-8 on the RTX 3060 -1.1 to
 -2.1 %, on the RTX 4060 Ti -0.7 to -1.1 %) and TU102 / TU104 / TU106 (the activation-ring latency kernel sm_75
-launches is priced 1.2-1.3x its time, #1183).
+launches is priced 1.2-1.3x its time, #1183). Those price errors are of the analyzer before the issue bound joined
+every rmma price (#1235). The end-to-end checks of 26.11 at master 27c115aac, Qwen3.5-9B Q4_K_M, analyzer against the
+held rules:
+
+| chip, card | C 1 | C 2 | C 4 | C 6 | C 8 |
+|---|---|---|---|---|---|
+| AD102, RTX 4090 | -2.2 % | -1.5 % | -2.9 % | -0.2 % | -0.1 % |
+| AD106, RTX 4060 Ti | -1.1 % | -0.3 % | +0.5 % | -1.0 % | -0.7 % |
+
+On the 4060 Ti the result is the same with the issue bound.
 
 `ninferno-serve route-analyzer` prices cells of facts-table boards on a CPU (the lab's exams). `analyzer.py` stays
 the lab's copy: `ninferno_route_analyzer_parity_test` holds the two equal (the same candidates, order and prices
