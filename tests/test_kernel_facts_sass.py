@@ -722,7 +722,8 @@ class Tail(unittest.TestCase):
         self.assertEqual(tuple(getattr(bare, f) for f in sc.TAIL_FIELDS),
                          (0,) * len(sc.TAIL_FIELDS))
         # The last two are global_waits' counts (the r8 rows' columns of the same names).
-        self.assertEqual(sc.TAIL_FIELDS[8:], ("glb_waits", "outside_glb_waits"))
+        self.assertEqual(sc.TAIL_FIELDS[8:], ("glb_waits", "outside_glb_waits", "ldg_edge", "ldg_edge_bytes",
+                                              "ldg_edge_stall"))
         waits = {0x100: LDG_SETS_SB2, 0x110: HMMA_WAITS_SB2}
         self.assertEqual(sc.loop_counts(body_of(TAIL, waits)).glb_waits, 1)
 

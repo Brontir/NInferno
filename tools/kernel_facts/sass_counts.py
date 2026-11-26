@@ -167,7 +167,10 @@ LOOP_COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELD
 # those of the code outside it (global_waits; the PROLOGUE_FIELDS of the same names, which the
 # r8 rows already carry): the DRAM round trips a K trip of this arch's SASS really exposes.
 TAIL_FIELDS = ("post_total", "post_stall", "red_lds", "red_total", "red_stall", "epi_total",
-               "epi_stall", "epi_stg", "glb_waits", "outside_glb_waits")
+               "epi_stall", "epi_stg", "glb_waits", "outside_glb_waits", "ldg_edge", "ldg_edge_bytes",
+               "ldg_edge_stall")
+# (r58, lab) ldg_edge*: the global loads a lane keeps in flight ACROSS the K loop's back edge (loads_over_back_edge),
+# their bytes and the static stall clocks they fly: the software prefetch that lets a trip's chain overlap its bytes.
 
 
 def columns_with(tail):
@@ -915,7 +918,54 @@ def schedule_counts(body, control, iteration, outside):
     outside_counts(body, control, outside, out)
     out["glb_waits"] = global_waits(body, control, iteration, 2)
     out["outside_glb_waits"] = global_waits(body, control, outside, 1)
+    out["ldg_edge"], out["ldg_edge_bytes"], out["ldg_edge_stall"] = loads_over_back_edge(
+        body, control, iteration, lambda op: base_opcode(op) in GLOBAL_LOADS)
     return out
+
+
+def loads_over_back_edge(body, control, indices, is_load):
+    """(loads, bytes a lane, stall clocks) a lane keeps in flight across the loop's back edge: the
+    iteration `indices` walked three times with peak_loads_in_flight's rule (a register read or
+    overwritten, a wait mask naming the load's scoreboard, DEPBAR.LE), the pending global loads at the
+    end of the second walk (steady state), and the static stall clocks the earliest of them has flown
+    when the third walk first waits on one (r58 prototype, lab)."""
+    indices = list(indices)
+    pending = []  # [registers, scoreboard, bytes, stall clocks since issue, carried]
+    edge, first_wait = (0, 0), None
+    for walk in range(3):
+        for i in indices:
+            opcode, operands = body[i][2], body[i][3]
+            c = control[i] if control is not None else None
+            carried = [p for p in pending if p[4]] if walk == 2 else []
+            if c is not None and c.wait_mask:
+                pending = [p for p in pending if p[1] == NO_BARRIER or not (c.wait_mask >> p[1]) & 1]
+            if base_opcode(opcode) == "DEPBAR":
+                m = DEPBAR_LE.search(operands)
+                if m:
+                    sb, keep = int(m.group(1)), int(m.group(2), 0)
+                    mine = [k for k, p in enumerate(pending) if p[1] == sb]
+                    done = set(mine[:max(0, len(mine) - keep)])
+                    pending = [p for k, p in enumerate(pending) if k not in done]
+            written = written_registers(opcode, operands)
+            fields = operands.split(",")
+            reads = set()
+            for f in fields[1:] if written else fields:
+                for m in SASS_READ_REGISTER.finditer(f):
+                    n = int(m.group(1))
+                    reads.update({"R%d" % n, "R%d" % (n + 1)} if m.group(2) else {"R%d" % n})
+            pending = [p for p in pending if not (p[0] & reads or p[0] & written)]
+            if walk == 2 and first_wait is None and any(p not in pending for p in carried):
+                first_wait = max(p[3] for p in carried if p not in pending)
+            for p in pending:
+                p[3] += c.stall if c is not None else 0
+            if is_load(opcode):
+                pending.append([written, c.write_barrier if c is not None else NO_BARRIER,
+                                access_bytes(opcode), 0, False])
+        if walk == 1:
+            edge = (len(pending), sum(p[2] for p in pending))
+            for p in pending:
+                p[4] = True
+    return edge + (first_wait or 0,)
 
 
 def global_waits(body, control, indices, walks):
