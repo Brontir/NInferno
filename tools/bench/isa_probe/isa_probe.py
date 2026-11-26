@@ -27,6 +27,9 @@ stale):
     isa_probe.py run   --section launch --arch 89 [--nvcc ...] [--out launch_probe_89.txt]
     isa_probe.py merge --input launch_probe_89.txt [--check]
 
+The cluster facts (#1228, sm_90+) come from cluster_probe.cu alike (`run --section cluster`,
+cluster_probe_<arch>.txt under "cluster", checks of other cards as for launch).
+
 `run --section launch` builds and runs it with the same idle and clock notes; `merge` of its
 output writes src/core/data/isa_probe/launch_probe_<arch>.txt, whose facts `regenerate` puts in
 the architecture's row under "launch" (an architecture needs its ISA row first). `--check` merges
@@ -543,11 +546,27 @@ def row_of(head, facts, source):
     return row
 
 
-# ---- The launch facts (launch_probe.cu) ----
-LAUNCH_SOURCE = os.path.join(HERE, "launch_probe.cu")
-LAUNCH_PROBE_LINE = re.compile(r'printf\("probe (launch_probe \d+)\\n"\)')
-LAUNCH_PROBE_VALUE = re.compile(r"launch_probe (\d+)")
-LAUNCH_PREFIX = "launch_probe_"
+# ---- The sections of their own probes (launch_probe.cu, cluster_probe.cu) ----
+class Section:
+    """A probe of its own beside isa_probe.cu, <name>_probe.cu, whose facts `regenerate` puts in an
+    architecture's row under <name> (its runs <name>_probe_<arch>.txt, a transfer check of another
+    card <name>_probe_<arch>_<card label>.txt under that entry's "checks"), so a row's other facts
+    stay what isa_probe measured: the launch facts (#613 PR-8b) and the cluster facts (#1228).
+    `facts` maps each fact to its unit and the probe's own range of it; `since` the probe version
+    a fact is printed from (an older run has no line of it); `absent(name, head, cc)` says whether
+    a fact may be missing from a run, `post(head, facts)` refuses a run that gives what its notes
+    say was not measured; `min_cc` the first compute capability the section exists on."""
+
+    def __init__(self, name, facts, since=None, absent=None, post=None, min_cc=0):
+        self.name, self.facts, self.since = name, facts, since or {}
+        self.absent, self.post, self.min_cc = absent, post, min_cc
+        self.file = f"{name}_probe.cu"
+        self.source = os.path.join(HERE, self.file)
+        self.prefix = f"{name}_probe_"
+        self.probe_line = re.compile(r'printf\("probe (%s_probe \d+)\\n"\)' % name)
+        self.probe_value = re.compile(r"%s_probe (\d+)" % name)
+
+
 # Every fact a launch run reports, all in wall ns: the cost of one more launch in a series of
 # empty kernels (launch_probe.cu's head): a graph node, the node with the programmatic
 # serialization attribute, a stream launch from a backlog, and an empty grid of 1, SMs, 4 x SMs,
@@ -561,32 +580,66 @@ LAUNCH_SINCE = {"floor_ns_4096": 2}
 PDL_NOT_MEASURED = "node_pdl_ns not measured"
 # The probe's own range of a fact (launch_probe.cu kFactMinNs, kFactMaxNs).
 LAUNCH_RANGE_NS = (10.0, 100000.0)
-LAUNCH_HEADER = ("probe", "card", "cc", "sms", "driver", "runtime", "nvcc", "source_sha256", "arch")
-LAUNCH_COUNTS = ("cc", "sms", "driver", "runtime")
+# Every fact a cluster run reports (cluster_probe.cu's head), at the product's cluster sizes C 2
+# and 8 (generic_gemm_launch.cuh): one cluster.sync() in ns, rank 0's read of one other rank's
+# partial of 1 and 2 weight sets (512 B a set) in ns, the CTAs a launch of C-CTA clusters holds.
+CLUSTER_SIZES = (2, 8)
+CLUSTER_FACTS = {}
+for _c in CLUSTER_SIZES:
+    CLUSTER_FACTS[f"cluster_sync_ns_c{_c}"] = ("ns", 10.0, 10000.0)
+    CLUSTER_FACTS[f"cluster_rank_ns_c{_c}_s1"] = ("ns", 10.0, 100000.0)
+    CLUSTER_FACTS[f"cluster_rank_ns_c{_c}_s2"] = ("ns", 10.0, 100000.0)
+    CLUSTER_FACTS[f"cluster_slots_c{_c}"] = ("ctas", 1.0, 1e6)
+SECTION_HEADER = ("probe", "card", "cc", "sms", "driver", "runtime", "nvcc", "source_sha256",
+                  "arch")
+SECTION_COUNTS = ("cc", "sms", "driver", "runtime")
+LAUNCH_HEADER, LAUNCH_COUNTS = SECTION_HEADER, SECTION_COUNTS
 
 
-def checked_in_launch_probe():
-    """The `probe` header value the checked-in launch_probe.cu prints (`launch_probe <n>`)."""
-    with open(LAUNCH_SOURCE) as f:
-        m = LAUNCH_PROBE_LINE.search(f.read())
+def _launch_absent(name, head, cc):
+    unmeasured = any(n.startswith(PDL_NOT_MEASURED) for n in head.get("notes", []))
+    return name == "node_pdl_ns" and unmeasured and cc < 90
+
+
+def _launch_post(head, facts):
+    if "node_pdl_ns" in facts and any(n.startswith(PDL_NOT_MEASURED)
+                                      for n in head.get("notes", [])):
+        raise ValueError("node_pdl_ns is given and noted as not measured")
+
+
+LAUNCH = Section("launch", {n: ("ns",) + LAUNCH_RANGE_NS for n in LAUNCH_FACTS}, LAUNCH_SINCE,
+                 _launch_absent, _launch_post)
+CLUSTER = Section("cluster", CLUSTER_FACTS, min_cc=90)
+SECTIONS = (LAUNCH, CLUSTER)
+LAUNCH_SOURCE, LAUNCH_PREFIX = LAUNCH.source, LAUNCH.prefix
+
+
+def checked_in_section(sec):
+    """The `probe` header value the checked-in <name>_probe.cu prints (`<name>_probe <n>`)."""
+    with open(sec.source) as f:
+        m = sec.probe_line.search(f.read())
     if not m:
-        raise ValueError("launch_probe.cu prints no probe version")
+        raise ValueError(f"{sec.file} prints no probe version")
     return m.group(1)
 
 
-def is_launch_run(text):
-    """Whether a probe output is launch_probe's (its probe line), not isa_probe's."""
-    return re.search(r"^probe launch_probe\b", text, re.M) is not None
+def section_of_run(text):
+    """The section whose probe wrote this output (its probe line), None for isa_probe's."""
+    for sec in SECTIONS:
+        if re.search(r"^probe %s_probe\b" % sec.name, text, re.M):
+            return sec
+    return None
 
 
-def parse_launch_run(text):
-    """The header fields and the facts of one launch_probe output, as `run --section launch`
+def parse_section_run(sec, text):
+    """The header fields and the facts of one <name>_probe output, as `run --section <name>`
     writes it; ValueError when a line is odd, a fact is unknown, given twice, not a positive
-    finite number of ns or outside the probe's range, a fact is missing (node_pdl_ns may be
-    absent below sm_90 with the probe's note), a header line is missing or no count, the run did
-    not end or its self-check failed, the version is newer than the checked-in probe, the source
-    is not the checked-in one at the checked-in version, the build is not the card's own
-    architecture, or the notes do not show the GPU idle (idle_refusal)."""
+    finite number in its unit or outside the probe's range, a fact is missing (where the section
+    lets none be absent), a header line is missing or no count, the run did not end or its
+    self-check failed, the version is newer than the checked-in probe, the source is not the
+    checked-in one at the checked-in version, the build is not the card's own architecture, the
+    card is below the section's first compute capability, or the notes do not show the GPU idle
+    (idle_refusal)."""
     head, facts, ended, failures, checked = {}, {}, False, [], False
     for line in text.splitlines():
         parts = line.split()
@@ -596,7 +649,7 @@ def parse_launch_run(text):
             if len(parts) != 4:
                 raise ValueError(f"odd fact line: {line!r}")
             name = parts[1]
-            if name not in LAUNCH_FACTS:
+            if name not in sec.facts:
                 raise ValueError(f"unknown fact: {line!r}")
             if name in facts:
                 raise ValueError(f"fact given twice: {name}")
@@ -606,12 +659,12 @@ def parse_launch_run(text):
                 raise ValueError(f"odd fact line: {line!r}") from None
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f"{name} is not a positive finite number: {line!r}")
-            if parts[3] != "ns":
-                raise ValueError(f"{name} is in ns, not {parts[3]}: {line!r}")
-            low, high = LAUNCH_RANGE_NS
+            unit, low, high = sec.facts[name]
+            if parts[3] != unit:
+                raise ValueError(f"{name} is in {unit}, not {parts[3]}: {line!r}")
             if not low <= value <= high:
-                raise ValueError(f"{name} {value} ns is outside the probe's {low:g}..{high:g}")
-            facts[name] = {"value": value, "unit": "ns"}
+                raise ValueError(f"{name} {value} {unit} is outside the probe's {low:g}..{high:g}")
+            facts[name] = {"value": value, "unit": unit}
         elif parts[0] == "end":
             ended = True
         elif parts[0] == "selfcheck":
@@ -622,7 +675,7 @@ def parse_launch_run(text):
             head.setdefault("notes", []).append(" ".join(parts[1:]))
         elif parts[0] == REFUSED_LINE:
             raise ValueError(f"`run` refused this run: {' '.join(parts[1:])}")
-        elif parts[0] in LAUNCH_HEADER:
+        elif parts[0] in SECTION_HEADER:
             if parts[0] in head:
                 raise ValueError(f"{parts[0]} line given twice")
             head[parts[0]] = " ".join(parts[1:])
@@ -632,16 +685,16 @@ def parse_launch_run(text):
         raise ValueError(f"incomplete run: ended={ended}, selfcheck={checked}")
     if failures:
         raise ValueError("the probe's self-check failed: " + "; ".join(failures))
-    for k in LAUNCH_HEADER:
+    for k in SECTION_HEADER:
         if not head.get(k):
             raise ValueError(f"no {k} line")
-    version = LAUNCH_PROBE_VALUE.fullmatch(head["probe"])
+    version = sec.probe_value.fullmatch(head["probe"])
     if not version:
         raise ValueError(f"odd probe line: {head['probe']!r}")
-    now = checked_in_launch_probe()
+    now = checked_in_section(sec)
     if int(version.group(1)) > int(now.split()[1]):
         raise ValueError(f"{head['probe']} is newer than the checked-in probe ({now})")
-    for k in LAUNCH_COUNTS:
+    for k in SECTION_COUNTS:
         if not (head[k].isdigit() and int(head[k]) > 0):
             raise ValueError(f"{k} is no positive count: {head[k]!r}")
     refusal = idle_refusal(head.get("notes", []))
@@ -649,32 +702,35 @@ def parse_launch_run(text):
         raise ValueError(refusal)
     if not SHA256.fullmatch(head["source_sha256"]):
         raise ValueError(f"odd source_sha256 line: {head['source_sha256']!r}")
-    if head["probe"] == now and head["source_sha256"] != source_sha256(LAUNCH_SOURCE):
+    if head["probe"] == now and head["source_sha256"] != source_sha256(sec.source):
         raise ValueError(f"source_sha256 {head['source_sha256']} is not the checked-in "
-                         f"launch_probe.cu's ({source_sha256(LAUNCH_SOURCE)}): a changed probe "
+                         f"{sec.file}'s ({source_sha256(sec.source)}): a changed probe "
                          f"bumps its version")
     cc = int(head["cc"])
     own = "sm_" + arch_key(cc, None)
     if head["arch"] != own:
         raise ValueError(f"built for {head['arch']}, not {own} (cc {cc})")
-    unmeasured = any(n.startswith(PDL_NOT_MEASURED) for n in head.get("notes", []))
-    for name in LAUNCH_FACTS:
+    if cc < sec.min_cc:
+        raise ValueError(f"{sec.name} facts start at cc {sec.min_cc}, not {cc}")
+    for name in sec.facts:
         if name in facts:
             continue
-        if name == "node_pdl_ns" and unmeasured and cc < 90:
+        if sec.absent and sec.absent(name, head, cc):
             continue
-        if int(version.group(1)) < LAUNCH_SINCE.get(name, 1):
+        if int(version.group(1)) < sec.since.get(name, 1):
             continue
+        unmeasured = sec is LAUNCH and any(n.startswith(PDL_NOT_MEASURED)
+                                           for n in head.get("notes", []))
         raise ValueError(f"incomplete run: missing {name}" +
                          (" (owed from sm_90 on)" if name == "node_pdl_ns" and unmeasured else ""))
-    if "node_pdl_ns" in facts and unmeasured:
-        raise ValueError("node_pdl_ns is given and noted as not measured")
+    if sec.post:
+        sec.post(head, facts)
     return head, facts
 
 
-def launch_of(head, facts, source):
-    """The "launch" entry of an architecture's row (or of a check under it) from one launch run;
-    `source` names the committed probe output it came from."""
+def section_entry(sec, head, facts, source):
+    """The <name> entry of an architecture's row (or of a check under it) from one run of the
+    section's probe; `source` names the committed probe output it came from."""
     return {
         "provenance": "Measured",
         "source": source,
@@ -685,8 +741,29 @@ def launch_of(head, facts, source):
                  "runtime": head["runtime"], "arch": head["arch"],
                  "source_sha256": head["source_sha256"]},
         "notes": list(head.get("notes", [])),
-        "facts": {name: facts[name] for name in LAUNCH_FACTS if name in facts},
+        "facts": {name: facts[name] for name in sec.facts if name in facts},
     }
+
+
+def checked_in_launch_probe():
+    """The `probe` header value the checked-in launch_probe.cu prints (`launch_probe <n>`)."""
+    return checked_in_section(LAUNCH)
+
+
+def is_launch_run(text):
+    """Whether a probe output is launch_probe's (its probe line), not isa_probe's."""
+    return section_of_run(text) is LAUNCH
+
+
+def parse_launch_run(text):
+    """parse_section_run of the launch section (node_pdl_ns may be absent below sm_90 with the
+    probe's note)."""
+    return parse_section_run(LAUNCH, text)
+
+
+def launch_of(head, facts, source):
+    """The "launch" entry of an architecture's row (or of a check under it) from one launch run."""
+    return section_entry(LAUNCH, head, facts, source)
 
 
 def card_label(card):
@@ -733,7 +810,13 @@ NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_p
         "node, as a node with the programmatic serialization attribute, as a stream launch from "
         "a backlog, and as an empty graph-node grid of 1, SMs, 4 x SMs, 1024 and 4096 CTAs (4096 "
         "from launch_probe 2 on); its `checks` are runs of other cards of the architecture, kept "
-        "as transfer checks.")
+        "as transfer checks. A row's `cluster` entry (sm_90+, #1228) is the cluster facts of "
+        "cluster_probe.cu (cluster_probe_<arch>.txt, checks alike), at the cluster sizes of the "
+        "register-MMA K split (C 2 and 8): one cluster.sync() of C 256-thread CTAs in ns, rank 0's "
+        "read of one other rank's partial of 1 and 2 weight sets (one warp, 512 B a set, the ranks "
+        "walked one at a time as the cN epilogue does) in ns, and the CTAs a launch of C-CTA "
+        "clusters holds at once (cudaOccupancyMaxActiveClusters x C for a CTA a plain launch holds "
+        "four of an SM; a cluster lives in one GPC).")
 
 
 def build_table(inputs_dir, replace=None):
@@ -765,42 +848,45 @@ def build_table(inputs_dir, replace=None):
         if key in arches:
             raise ValueError(f"{name}: sm_{key} is already given by {arches[key]['source']}")
         arches[key] = row
-    # The launch facts: launch_probe_<arch>.txt into the architecture's row, a transfer check
-    # launch_probe_<arch>_<card label>.txt under that launch entry.
-    launches, checks = {}, []
-    for name in sorted(names):
-        if not (name.startswith(LAUNCH_PREFIX) and name.endswith(".txt")):
-            continue
-        key, _, label = name[len(LAUNCH_PREFIX):-len(".txt")].partition("_")
-        try:
-            head, facts = parse_launch_run(read(name))
-        except ValueError as e:
-            raise ValueError(f"{name}: {e}") from None
-        entry = launch_of(head, facts, name)
-        own = arch_key(entry["cc"], None)
-        if key != own:
-            raise ValueError(f"{name}: a run of sm_{own}, not of sm_{key}")
-        if label:
-            if label != card_label(entry["card"]):
-                raise ValueError(f"{name}: a check is named after its card "
-                                 f"({LAUNCH_PREFIX}{own}_{card_label(entry['card'])}.txt)")
-            checks.append((key, entry))
-        else:
-            launches[key] = entry
-    for key, entry in launches.items():
-        if key not in arches:
-            raise ValueError(f"{entry['source']}: sm_{key} has no ISA row to carry its launch "
-                             "facts")
-        arches[key]["launch"] = entry
-    for key, entry in checks:
-        if key not in launches:
-            raise ValueError(f"{entry['source']}: a check of sm_{key}, which has no launch row")
-        # A check is a transfer to another card: one of the row's own card checks nothing (the
-        # row is that card's run; the check is left over from before the row's card changed).
-        if card_label(entry["card"]) == card_label(launches[key]["card"]):
-            raise ValueError(f"{entry['source']}: a check of the row's own card "
-                             f"({launches[key]['card']}, {launches[key]['source']}); remove it")
-        launches[key].setdefault("checks", []).append(entry)
+    # The sections' facts (launch, cluster): <name>_probe_<arch>.txt into the architecture's row,
+    # a transfer check <name>_probe_<arch>_<card label>.txt under that entry.
+    for sec in SECTIONS:
+        entries, checks = {}, []
+        for name in sorted(names):
+            if not (name.startswith(sec.prefix) and name.endswith(".txt")):
+                continue
+            key, _, label = name[len(sec.prefix):-len(".txt")].partition("_")
+            try:
+                head, facts = parse_section_run(sec, read(name))
+            except ValueError as e:
+                raise ValueError(f"{name}: {e}") from None
+            entry = section_entry(sec, head, facts, name)
+            own = arch_key(entry["cc"], None)
+            if key != own:
+                raise ValueError(f"{name}: a run of sm_{own}, not of sm_{key}")
+            if label:
+                if label != card_label(entry["card"]):
+                    raise ValueError(f"{name}: a check is named after its card "
+                                     f"({sec.prefix}{own}_{card_label(entry['card'])}.txt)")
+                checks.append((key, entry))
+            else:
+                entries[key] = entry
+        for key, entry in entries.items():
+            if key not in arches:
+                raise ValueError(f"{entry['source']}: sm_{key} has no ISA row to carry its "
+                                 f"{sec.name} facts")
+            arches[key][sec.name] = entry
+        for key, entry in checks:
+            if key not in entries:
+                raise ValueError(f"{entry['source']}: a check of sm_{key}, which has no "
+                                 f"{sec.name} row")
+            # A check is a transfer to another card: one of the row's own card checks nothing
+            # (the row is that card's run; the check is left over from before the row's card
+            # changed).
+            if card_label(entry["card"]) == card_label(entries[key]["card"]):
+                raise ValueError(f"{entry['source']}: a check of the row's own card "
+                                 f"({entries[key]['card']}, {entries[key]['source']}); remove it")
+            entries[key].setdefault("checks", []).append(entry)
     arches = dict(sorted(arches.items(), key=lambda kv: kv[1]["cc"]))
     return {"schema": SCHEMA, "note": NOTE, "arches": arches}
 
@@ -945,8 +1031,8 @@ REFUSED_LINE = "refused"
 
 
 def cmd_run(a):
-    if getattr(a, "section", "isa") == "launch":
-        return _run_launch(a)
+    if getattr(a, "section", "isa") != "isa":
+        return _run_section(a, next(sec for sec in SECTIONS if sec.name == a.section))
     arch = a.arch
     src = SOURCE
     # Lines `run` adds before the probe's output: which source the build was of, its -arch, and
@@ -986,18 +1072,18 @@ def cmd_run(a):
         return _run_probe(a, exe, head, parse_run, mma_refusal, a.out or f"isa_probe_{arch}.txt")
 
 
-def _run_launch(a):
-    """`run --section launch`: launch_probe.cu built for sm_<arch> and run as isa_probe is, its
+def _run_section(a, sec):
+    """`run --section <name>`: <name>_probe.cu built for sm_<arch> and run as isa_probe is, its
     output headed by the source's sha256 and the build's -arch."""
     arch = a.arch
-    head = [f"source_sha256 {source_sha256(LAUNCH_SOURCE)}", f"arch sm_{arch}"]
+    head = [f"source_sha256 {source_sha256(sec.source)}", f"arch sm_{arch}"]
     with tempfile.TemporaryDirectory() as tmp:
-        exe = os.path.join(tmp, "launch_probe.exe" if os.name == "nt" else "launch_probe")
-        cmd = [a.nvcc, "-O3", "-std=c++17", f"-arch=sm_{arch}", "-o", exe, LAUNCH_SOURCE]
+        exe = os.path.join(tmp, f"{sec.name}_probe.exe" if os.name == "nt" else f"{sec.name}_probe")
+        cmd = [a.nvcc, "-O3", "-std=c++17", f"-arch=sm_{arch}", "-o", exe, sec.source]
         print("+", " ".join(cmd), file=sys.stderr)
         subprocess.run(cmd, check=True)
-        return _run_probe(a, exe, head, parse_launch_run, None,
-                          a.out or f"{LAUNCH_PREFIX}{arch}.txt")
+        return _run_probe(a, exe, head, lambda text: parse_section_run(sec, text), None,
+                          a.out or f"{sec.prefix}{arch}.txt")
 
 
 def _run_probe(a, exe, head, parse, extra_refusal, path):
@@ -1099,27 +1185,28 @@ def cmd_merge(a):
     # Read whole before the destination opens: the input may be the destination itself.
     with open(a.input) as f:
         text = f.read()
-    launch, check = is_launch_run(text), getattr(a, "check", False)
+    sec, check = section_of_run(text), getattr(a, "check", False)
     try:
-        if check and not launch:
-            raise ValueError("--check takes a launch_probe run (an ISA row has no checks)")
-        head, _ = (parse_launch_run if launch else parse_run)(text)
+        if check and sec is None:
+            raise ValueError("--check takes a launch_probe or cluster_probe run (an ISA row has "
+                             "no checks)")
+        head, _ = parse_section_run(sec, text) if sec else parse_run(text)
     except ValueError as e:
         print(f"isa_probe: {a.input}: {e}; nothing merged", file=sys.stderr)
         return 1
     key = arch_key(int(head["cc"]), head.get("shape"))
-    if not launch:
+    if sec is None:
         name = f"isa_probe_{key}.txt"
     elif check:
-        name = f"{LAUNCH_PREFIX}{key}_{card_label(head['card'])}.txt"
+        name = f"{sec.prefix}{key}_{card_label(head['card'])}.txt"
     else:
-        name = f"{LAUNCH_PREFIX}{key}.txt"
+        name = f"{sec.prefix}{key}.txt"
     dest = os.path.join(a.inputs, name)
     # A row's card changes only on purpose: a run of another card does not replace the row's
     # run under its architecture's name unless --other-card says so (a check is named after its
     # card, so it never replaces another card's). Cards compare by their file label (card_label:
-    # spacing and the vendor words aside), as build_table's own-card check does. A launch row's
-    # old run of another card stays, as that card's check.
+    # spacing and the vendor words aside), as build_table's own-card check does. A section
+    # row's (launch, cluster) old run of another card stays, as that card's check.
     writes = [(dest, text)]
     if os.path.exists(dest):
         with open(dest) as f:
@@ -1132,18 +1219,18 @@ def cmd_merge(a):
                       f"{head['card']}: the row's card changes only with --other-card; nothing "
                       "merged", file=sys.stderr)
                 return 1
-            if launch and not check:
-                kept = os.path.join(a.inputs, f"{LAUNCH_PREFIX}{key}_{card_label(old_card)}.txt")
+            if sec and not check:
+                kept = os.path.join(a.inputs, f"{sec.prefix}{key}_{card_label(old_card)}.txt")
                 if os.path.exists(kept):
                     print(f"isa_probe: {kept} exists: the row's old run of {old_card} would "
                           "replace it; nothing merged", file=sys.stderr)
                     return 1
                 writes.append((kept, old))
                 m = re.search(r"^probe (.+)$", old, re.M)
-                if not m or m.group(1).strip() != checked_in_launch_probe():
+                if not m or m.group(1).strip() != checked_in_section(sec):
                     print(f"isa_probe: warning: the kept run {kept} is "
                           f"{m.group(1).strip() if m else 'of no probe version'}, not the "
-                          f"checked-in {checked_in_launch_probe()}: re-take it on its card",
+                          f"checked-in {checked_in_section(sec)}: re-take it on its card",
                           file=sys.stderr)
     # The table the merge makes is built first, with the runs read in place of their files: a
     # table that cannot be built writes nothing.
@@ -1208,16 +1295,17 @@ def cmd_show(a):
                 print(f"  {name:36s} {'-':>10s} (not measured by this row's probe)")
                 continue
             print(f"  {name:36s} {v['value']:10.3f} {v['unit']}")
-        launch = row.get("launch")
-        if launch is None:
-            print("  launch: not measured (no launch_probe run of this architecture)")
-            continue
-        for entry, what in [(launch, "launch")] + [(c, "check") for c in launch.get("checks", [])]:
-            print(f"  {what}: {entry['card']} ({entry['tool']['probe']}, {entry['source']})")
-            for name in LAUNCH_FACTS:
-                v = entry["facts"].get(name)
-                shown = f"{v['value']:10.3f} ns" if v else f"{'-':>10s} (not measured)"
-                print(f"    {name:34s} {shown}")
+        for sec in SECTIONS:
+            top = row.get(sec.name)
+            if top is None:
+                print(f"  {sec.name}: not measured (no {sec.name}_probe run of this architecture)")
+                continue
+            for entry, what in [(top, sec.name)] + [(c, "check") for c in top.get("checks", [])]:
+                print(f"  {what}: {entry['card']} ({entry['tool']['probe']}, {entry['source']})")
+                for name, (unit, _, _) in sec.facts.items():
+                    v = entry["facts"].get(name)
+                    shown = f"{v['value']:10.3f} {unit}" if v else f"{'-':>10s} (not measured)"
+                    print(f"    {name:34s} {shown}")
     return 0
 
 
@@ -1232,13 +1320,15 @@ def main():
                    "<out>" + REFUSED)
     r.add_argument("--idle-unchecked", action="store_true",
                    help="accept a run whose compute-process list nvidia-smi could not give")
-    r.add_argument("--section", choices=("isa", "launch"), default="isa",
-                   help="isa_probe.cu (the default) or launch_probe.cu (the launch facts)")
+    r.add_argument("--section", choices=("isa",) + tuple(sec.name for sec in SECTIONS),
+                   default="isa", help="isa_probe.cu (the default), launch_probe.cu (the launch "
+                   "facts) or cluster_probe.cu (the cluster facts, sm_90+)")
     r.set_defaults(fn=cmd_run)
     m = sub.add_parser("merge")
     m.add_argument("--input", required=True)
     m.add_argument("--check", action="store_true",
-                   help="a launch run of another card of the architecture: a transfer check")
+                   help="a launch or cluster run of another card of the architecture: a "
+                   "transfer check")
     m.add_argument("--other-card", action="store_true",
                    help="let a run of another card replace the row's run of its architecture")
     m.add_argument("--inputs", default=DEFAULT_INPUTS)
