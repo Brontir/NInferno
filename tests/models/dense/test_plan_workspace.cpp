@@ -818,10 +818,10 @@ void inkling2_declines(const rt::PlanModelFacts& facts, const DeviceClass& devic
     rt::PlanModelFacts unread = facts;
     unread.tokenizer_tokens   = 0;
     refuses(basis_of(unread, options, device), "tokenizer", "without the tokenizer's ids, it");
-    // The start's bound is the vocabulary (unpadded_vocab_size, 200058), below the head's 201024
-    // padded rows: one id past it is refused.
+    // The start's bound is the vocabulary (unpadded_vocab_size), below the head's padded rows: one
+    // id past it is refused.
     rt::PlanModelFacts wide = facts;
-    wide.tokenizer_tokens   = 200059;
+    wide.tokenizer_tokens   = inkling2_mini().at("unpadded_vocab_size").get<std::uint32_t>() + 1;
     refuses(basis_of(wide, options, device), "vocabulary", "a tokenizer wider than the vocabulary");
     refuses(basis_of(facts, options_of(32768, 2048, 1, ActivationMode::Int8), device), "int8",
             "--activations int8");

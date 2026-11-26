@@ -595,7 +595,8 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
 // routed), where the tokenizer names more ids than the model's vocabulary (config.vocab_size, the
 // embedding rows the start's frontend checks against), where load would refuse the weights or a
 // binding needs the payload, and where no device class is known. (The start's BF16 MMA requirement
-// holds on every supported board: Volta's and Turing's builds compose it, DeviceFeatures.)
+// holds on every supported board: Turing's build composes it from f16 MMAs, Volta's emulates it in
+// FP32 FMAs; DeviceFeatures.)
 PlanWorkspaceAnswer inkling2_workspace(const PlanModelFacts& m, const EngineOptions& options,
                                        const detail::SequencePlanImpl* plan) {
     if (m.model_type != "inkling2_text") { return {}; }
