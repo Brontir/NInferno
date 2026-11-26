@@ -1625,7 +1625,8 @@ def list_differences(args, differ, missing, extra, expected, got, line):
 # epilogues). check holds every pre-quantized nt = 8 R8 row to its resources (the registers,
 # stack, local and shared bytes, which never moved) and reports its loop counts beside, never
 # failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966). extract still
-# writes the build's counts. `key` is the row's key fields (FAMILIES["r8"].key_columns:
+# writes the build's counts, except on a row REGISTER_ALLOCATIONS also counts (sm_80
+# W4a8U4ZpG<64> 4 2 8 1 1), whose section row it keeps (keep_allocations). `key` is the row's key fields (FAMILIES["r8"].key_columns:
 # codec, warps, rows, nt, epilogue, pre).
 def sass_unstable(family, key):
     return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
@@ -1644,9 +1645,9 @@ def sass_unstable(family, key):
 # (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check holds such a row to its stack,
 # local and shared bytes and to a register count among the ones counted here, prints both counts and
 # never fails on the loop counts, at another count or at the same one (extract --update keeps the
-# section's row either way, so a re-extract does not flip it; a source change to these rows is
-# re-extracted by hand, as no check can tell it from the other schedule): ptxas also makes two schedules
-# at one count of these rows (sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77 registers, outside the K
+# section's row either way, so a re-extract does not flip it; after a source change to such a row,
+# delete the row from the section first, then extract --update writes the build's): ptxas also
+# makes two schedules at one count of these rows (sm_89 GroupwiseG64Decoder<5> 4 1 1 1 1 3 at 77 registers, outside the K
 # loop 1086 / 734 total in an RTX 4090 serve build and an RTX 4070 Ti full build; sm_86 <6> 4 1 1 1 1 3
 # at 72, 673 / 737 in two RTX 3060 full builds; nvcc 13.4.92, one source, #1226); extract --update keeps
 # the section's row where the build's is another counted allocation (keep_allocations). A new count
