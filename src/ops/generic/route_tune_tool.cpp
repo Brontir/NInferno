@@ -8,6 +8,7 @@
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
 //                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
 //                     [--group-sums-plane 1] [--route-policy evidence|legacy] [--route-dir DIR]
+//                     [--graph 1]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -171,7 +172,7 @@ int route_tune_main(int argc, char** argv) {
                          "[--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
                          "[--rotate 0|1] [--describe 1] [--group-sums-plane 1] "
-                         "[--route-policy evidence|legacy] [--route-dir DIR]\n";
+                         "[--route-policy evidence|legacy] [--route-dir DIR] [--graph 1]\n";
             return 2;
         }
 
@@ -378,7 +379,25 @@ int route_tune_main(int argc, char** argv) {
             for (const auto t : wide_points()) t_max = std::max(t_max, t);
         }
 
-        TuneTimer timer(nullptr, 1, samples);
+        // --graph 1: a decode or verify sample (T <= 16, over the copies) is captured once into a
+        // CUDA graph and its replays are timed, as the engine replays decode (#1193 M4). On a
+        // stream every kernel waits ~0.7 us for the front end (RTX 3090 nsys of this tuner, q4k
+        // 4096 x 4096 T 2: 0.67-0.70 us before each kernel; in the engine's graph -0.06..0.1), so
+        // a two-kernel route (vec's quantizer, r8 / mmq's pre-pass) paid it twice. Capture needs a
+        // stream of its own: the legacy default stream cannot be captured.
+        const bool graph         = opt.count("--graph") && opt["--graph"] == "1";
+        cudaStream_t tune_stream = nullptr;
+        if (graph) CUDA_CHECK(cudaStreamCreateWithFlags(&tune_stream, cudaStreamNonBlocking));
+
+        struct StreamReset {
+            cudaStream_t s;
+
+            ~StreamReset() {
+                if (s != nullptr) cudaStreamDestroy(s);
+            }
+        } stream_reset{tune_stream};
+
+        TuneTimer timer(tune_stream, 1, samples);
         // Whether the run times a decode or verify width (T <= 16): the band sweep's points, or
         // the prefill widths from chunk / 2.
         const bool times_small_t =
@@ -523,17 +542,54 @@ int route_tune_main(int argc, char** argv) {
                 // short calls times the kernels and not the host's launch rate. Launch overlap
                 // between the calls is the stream's front end only: the tuner sets no PDL joins.
                 timer.set_lead_us(over_copies && !spare.empty() ? 20.0 * (1 + spare.size()) : 0.0);
-                const double us =
-                    timer.median_us([&](cudaStream_t s) {
-                        call.weight = &w.weight;
+                const auto sample = [&](cudaStream_t s) {
+                    call.weight = &w.weight;
+                    generic::run_route(r, call, &workspace, s);
+                    if (!over_copies) return;
+                    for (const RandomWeight& c : spare) {
+                        call.weight = &c.weight;
                         generic::run_route(r, call, &workspace, s);
-                        if (!over_copies) return;
-                        for (const RandomWeight& c : spare) {
-                            call.weight = &c.weight;
-                            generic::run_route(r, call, &workspace, s);
+                    }
+                };
+                // A graph sample is the copies' one: a call without spare copies (--rotate 0, or
+                // one weight past 2x L2) keeps the flushed single call, and its row says so.
+                const bool graphed = graph && over_copies && !spare.empty();
+                double us_sum      = 0.0;
+                if (graphed) {
+                    // One eager pass first: a route's lazy setup (its workspace, a table read)
+                    // must not happen inside the capture.
+                    sample(tune_stream);
+                    CUDA_CHECK(cudaStreamSynchronize(tune_stream));
+                    // The graph, its instance and the capture are released on every path: a
+                    // throw inside the capture ends it before the stream is destroyed.
+                    struct Captured {
+                        cudaStream_t s;
+                        cudaGraph_t g      = nullptr;
+                        cudaGraphExec_t ge = nullptr;
+                        bool capturing     = false;
+                        ~Captured() {
+                            if (capturing) {
+                                cudaGraph_t partial = nullptr;
+                                cudaStreamEndCapture(s, &partial);
+                                if (partial != nullptr) cudaGraphDestroy(partial);
+                            }
+                            if (ge != nullptr) cudaGraphExecDestroy(ge);
+                            if (g != nullptr) cudaGraphDestroy(g);
                         }
-                    }) /
-                    static_cast<double>(over_copies ? 1 + spare.size() : 1);
+                    } cap{tune_stream};
+                    CUDA_CHECK(
+                        cudaStreamBeginCapture(tune_stream, cudaStreamCaptureModeThreadLocal));
+                    cap.capturing = true;
+                    sample(tune_stream);
+                    cap.capturing = false;
+                    CUDA_CHECK(cudaStreamEndCapture(tune_stream, &cap.g));
+                    CUDA_CHECK(cudaGraphInstantiate(&cap.ge, cap.g, 0));
+                    us_sum = timer.median_us(
+                        [&](cudaStream_t s) { CUDA_CHECK(cudaGraphLaunch(cap.ge, s)); });
+                } else {
+                    us_sum = timer.median_us(sample);
+                }
+                const double us = us_sum / static_cast<double>(over_copies ? 1 + spare.size() : 1);
                 if (routes_csv &&
                     written.insert({static_cast<int>(r.family) * 256 + r.schedule, t}).second) {
                     routes_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
@@ -575,11 +631,13 @@ int route_tune_main(int argc, char** argv) {
                     }
                     // How the sample was timed (#518): "copies", consecutive calls over `calls`
                     // weight copies between one event pair (a decode width under --rotate 1),
-                    // "flushed", one call after the L2 flush, or "warm", one call where the timer
-                    // has no flush buffer (#574); the median of `samples` of them.
+                    // "graph", the same calls captured once into a CUDA graph and replayed (--graph
+                    // 1), "flushed", one call after the L2 flush, or "warm", one call where the
+                    // timer has no flush buffer (#574); the median of `samples` of them.
                     const bool rotated = over_copies && !spare.empty();
                     routes_csv << ',' << run_id << ',' << device_id << ','
-                               << (rotated           ? "copies"
+                               << (graphed           ? "graph"
+                                   : rotated         ? "copies"
                                    : timer.flushes() ? "flushed"
                                                      : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
