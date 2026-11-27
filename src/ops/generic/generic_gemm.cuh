@@ -3502,13 +3502,31 @@ __launch_bounds__(Schedule::kThreads,
             constexpr int slot = decltype(slot_tag)::value;
             const int token    = token0 + group;
             const int base     = step * KStep;
-            const bool live    = token < a.tokens && base < a.k;
-            const __nv_bfloat16* src = x + (live ? static_cast<std::int64_t>(token) * a.ldx : 0);
+            // A token at or past T: on two and four K-warps a CTA its lanes copy token 0's
+            // activations in full (its columns are never stored), zero-filled only past the end of
+            // K. The zero-fill (cp.async of no source bytes) stalled the copies' issue on GA10x where
+            // the weight row pitch is a whole number of 128-B lines (q4k K a multiple of 2048):
+            // 12288 x 4096 SwiGLU at T1 198 -> 179 us on the RTX 3060, 77 -> 72 on the RTX 3090,
+            // fading as the dead lanes go by T8 (#1246). Eight K-warps keep the zero-fill: the
+            // same change there lost 9-14 % at every T on GA106 with the same registers.
+            if constexpr (WK <= 4) {
+                const bool live_k = base < a.k;
+                const __nv_bfloat16* src =
+                    x + (token < a.tokens ? static_cast<std::int64_t>(token) * a.ldx : 0);
 #pragma unroll
-            for (int c = 0; c < J; ++c) {
-                cp_async_zfill<8>(&act_stage[slot][warp][c][lane],
-                                  src + base + act_at<Decoder, J>(c, quad),
-                                  live ? 8 : 0);
+                for (int c = 0; c < J; ++c) {
+                    cp_async_zfill<8>(&act_stage[slot][warp][c][lane],
+                                      src + base + act_at<Decoder, J>(c, quad), live_k ? 8 : 0);
+                }
+            } else {
+                const bool live = token < a.tokens && base < a.k;
+                const __nv_bfloat16* src =
+                    x + (live ? static_cast<std::int64_t>(token) * a.ldx : 0);
+#pragma unroll
+                for (int c = 0; c < J; ++c) {
+                    cp_async_zfill<8>(&act_stage[slot][warp][c][lane],
+                                      src + base + act_at<Decoder, J>(c, quad), live ? 8 : 0);
+                }
             }
             cp_commit();
         } else if constexpr (kAhead) {
