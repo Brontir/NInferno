@@ -52,12 +52,9 @@ EMU_LAT_NS = {1: 563.2, 2: 437.0, 3: 437.0, 4: 377.6}
 EMU_ISSUE = 4.0 * 1627.0 / 18.86
 # r26 lab: DRAM row activations, 1e9 a second = a ns (probe stride11 Acont u 32, NOTES 24.11 13:35-13:40, one run a die;
 # the 3060 rerun 3.58). A probe fact of the die with its memory, to move into sm_rate_facts.json.
-ROW_ACT = dict(ga102=8.38, ad104=4.07, ad102=8.17, gb202=18.15, gb203=10.42, ad106=4.61, ga106=3.57, tu102=8.69, gv100=8.89)
 # The last point at full rate (0.92-0.95 of peak) of the same curves: 48 rows on GA102, AD102, AD106 (NOTES 25.11 03:05,
 # 03:18), GB202, GB203 (stride4f_l5090.out, _l5070.out); GA106 flat to 96-112 (03:30: 104); TU102 knee 112-128 (03:10), its
 # flat point not logged: 96 taken (one probe step below the knee), to be read from stride4f_l2080.out.
-ROW_FLAT = {'': 48.0, 'ga106': 104.0, 'tu102': 96.0, '75': 96.0}
-STRIDE4_ROW_BYTES = 2720.0         # the row length of the stride4f probe (rb)
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
 MMQ_FILL = 0.9                     # core/mmq_columns.h launch_of: a tile a CTA where the grid fills its last wave to 90 %
 # generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
@@ -153,9 +150,6 @@ def card_of(gpu, F):
                      smem_sm=float(lim['smem_per_sm_kib']) * 1024.0, smem_res=float(lim.get('smem_reserved_per_block', 0)))
             c['arch'] = arch
             c['chip'] = str(gpu.get('chip', '')).lower()
-            # r26 (RACT): the die's DRAM row activations a ns (probe stride11, 32 B a request; lab table ROW_ACT until
-            # it is a gpu_facts / sm_rate fact); None where the die has no probe run.
-            c['row_act'] = ROW_ACT.get(str(gpu.get('chip', '')).lower())
             c['die'] = dict(nr=c['nr'])                      # the arch's narrow-load facts (analyzer_facts.NARROW)
         cache[key] = c
     return cache[key]
@@ -235,27 +229,32 @@ STREAM_SHARE = 0.94
 
 
 
-_ROWS_OPEN = []
+def _die_facts():
+    """src/core/data/die_round_facts.json, the probe facts a die the engine compiles in (core/die_round_facts.h)."""
+    import json
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src', 'core', 'data', 'die_round_facts.json')
+    with open(p, encoding='utf-8') as f:
+        return json.load(f)
 
 
-def rows_open_facts():
-    """The rows-open probe facts a die (src/core/data/rows_open_facts.json, compiled into the engine the same way): {chip: {request, curve, pitch}}."""
-    if not _ROWS_OPEN:
-        import json
-        p = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src', 'core', 'data', 'rows_open_facts.json')
-        _ROWS_OPEN.append(json.load(open(p, encoding='utf-8'))['dies'])
-    return _ROWS_OPEN[0]
+_DF = _die_facts()
+_DIES = _DF['dies']
+STRIDE4_ROW_BYTES = float(_DF['probe_row_bytes'])  # the row length of the stride4k probe (rb)
+STREAM_DIE = {ch: v['stream_share'] for ch, v in _DIES.items() if 'stream_share' in v}
+STREAM_ARCH = dict(_DF['arch']['stream_share'])    # a die without a run takes its arch's mean
+HEAD_T1 = {ch: v['head_t1_ns'] for ch, v in _DIES.items() if 'head_t1_ns' in v}
+PH_WAVES = {ch: (v.get('in_phase_waves'), v.get('in_phase_share')) for ch, v in _DIES.items() if 'in_phase_waves' in v or 'in_phase_share' in v}
+ROW_FLAT = dict(_DF['arch']['row_flat'], **{ch: v['row_flat'] for ch, v in _DIES.items() if 'row_flat' in v})
 
 
 def rows_open_z():
     """r80: the stride4z / stride4q8 sweeps by row pitch a die ({chip: {'pitches': ...}}), the dies with a sweep only."""
-    return {c: {'pitches': v['pitch']} for c, v in rows_open_facts().items() if 'pitch' in v}
+    return {ch: {'pitches': v['rows_open']['pitch']} for ch, v in _DIES.items() if 'pitch' in v.get('rows_open', {})}
 
 
 def rows_open():
     """r76: the stride4k curves a die at the probe's 2720-B rows ({chip: {'request', 'geo'}})."""
-    return {c: {'request': v.get('request'), 'geo': v['curve']} for c, v in rows_open_facts().items() if 'curve' in v}
-
+    return {ch: {'request': v['rows_open'].get('request'), 'geo': v['rows_open']['curve']} for ch, v in _DIES.items() if 'curve' in v.get('rows_open', {})}
 
 
 def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
@@ -686,15 +685,7 @@ def vec_counts(c, P, q, fmt, k, T):
     return tot, stall, o_tot, o_stall, trips, ld, body
 
 
-STREAM_DIE = {'ga102': 0.949, 'ga106': 0.947, 'ad106': 0.996, 'ad104': 0.989, 'ad102': 0.977, 'gb203': 0.972, 'gb202': 0.959, 'tu102': 0.945}
-# r57: the once-a-launch head a die, ns: the rounds probes' intercept less the stream launch, rmma w1x16 at 1 CTA an SM, q6k add k 12288, T1
-# (srnd47_<card>, srnd47b_4070; AD102 from its T2 run). Residual by K and T in NOTES (27.11 01:00): k 4096 gated: AD106 4.1, GB203 2-3, GB202 ~0.
-HEAD_T1 = {'ad106': 2310.0, 'ad104': 3730.0, 'ad102': 5810.0, 'gb203': 540.0, 'gb202': 450.0, 'ga106': 4360.0, 'ga102': 4200.0}
-# r69: the in-phase waves of a lone CTA an SM: (srndgL w1x16 T1 head - HEAD_T1) / the counted drain a wave (l0 + static outside + one trip's stall and window):
-# a probe fact a die. AD103 takes AD104's common head, AD102 the Ada mean (BORROWED); TU102 has no HEAD_T1 (its whole head); GB202: the share of a drain every round.
-PH_WAVES = {'ga102': (2.3, None), 'ga106': (1.9, None), 'ad104': (2.9, None), 'ad106': (3.6, None), 'ad103': (3.7, None), 'ad102': (3.4, None), 'gb203': (0.9, None),
-            'gb202': (None, 0.39), 'tu102': (5.2, None)}
-STREAM_ARCH = {'89': 0.987, '86': 0.949, '80': 0.947, '120a': 0.966, '75': 0.945}   # a die without a run takes its arch's mean (AD103: borrowed)
+
 
 
 def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
