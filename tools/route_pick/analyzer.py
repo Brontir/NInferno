@@ -233,13 +233,6 @@ def cluster_cap(c, C):
 STREAM_SHARE = 0.94
 
 
-def pipe_on(fam):
-    """RPIPE names the families whose rounds pipeline (r rmma, 8 r8, v vec): r28."""
-    return fam in ''
-
-
-def eta():
-    return float(os.environ.get('RETA', STREAM_SHARE))
 
 
 _ROWS_OPEN = []
@@ -355,21 +348,10 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
                   red * cps * warps * _num(r['int']) / PARTITIONS / clk + (1.0 - red) * own,
                   cps * warps * tot / PARTITIONS / clk,                       # the issue bound: the warps of the busiest SM's CTAs, an instruction a clock a partition
                   cm * warps * (tot + emu) / PARTITIONS / clk if emu else 0.0)  # the issue bound with emulated calls
-        ro = ''
-        oo = o / cps if ro == 'cps' else (o / occ if ro == 'occ' else o)
+        oo = o
         wave = (nc * bcta / bus / float(B))
         sm = trips * tau + oo + wave                        # the wave term (round 18, AUDIT r18: 1 + 1 / warps_k)
-        if pipe_on('r'):
-            # r28 (probes srnd / srnd2, five dies: t = a + b x rounds, b = the round's bytes at 0.85-0.94 of peak for
-            # every schedule that is not SM-bound; few-CTA calls 0.80-0.85 of their time under hypot): rounds pipeline.
-            # The launch's CTAs start in phase, so once a launch the bytes wait a DRAM latency, the prologue, the last
-            # K trip's work without its DRAM waits and the epilogue (H); after that the bus never idles, or the SMs'
-            # own chains bound the rounds. A round gives (SM side, DRAM side, H).
-            own_nd = own - w_dram
-            tau_nd = max(own_nd, red * cps * warps * _num(r['int']) / PARTITIONS / clk + (1.0 - red) * own_nd,
-                         cps * warps * tot / PARTITIONS / clk, cm * warps * (tot + emu) / PARTITIONS / clk if emu else 0.0)
-            return (sm, dram, c['l0'] + tau_nd + oo)
-        if ((('l' in 'rl') if _num(r['latency']) >= 1 else ('p' in 'rl' or ('1' in 'rl' and occ <= 1.0)) and (c.get('chip') in STREAM_DIE or c['arch'] in STREAM_ARCH))):   # RF4P: the pieces on (r r8 at T 1, l latency, p plain)
+        if _num(r['latency']) >= 1 and (c.get('chip') in STREAM_DIE or c['arch'] in STREAM_ARCH):   # the latency instance's round (r61 form)
             # r61 (the instance form; ncun4 x 5 dies, the 9B fail cells): the CTAs of a round run in phase, so the round is its bytes at the
             # die's stream share plus what the kernel's form leaves exposed. PLAIN instance: the loop's static stall clocks and its DRAM
             # round trips (windows) over the trips, serial. LATENCY instance (the activation ring / staged copy: kernel-facts column
@@ -396,29 +378,24 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
         out += 2.0 * cl['sync'] + (C - 1) * cl['rank'][int(sets)]
     ln = launch_ns(c, P, ctas)
     # r93: RF4P letter h: a PLAIN instance of one CTA an SM takes the once-a-launch head only (the same counted drain), its round stays today's plain round
-    if (('l' in 'rl') if _num(r['latency']) >= 1 else ('p' in 'rl' or 'H' in 'rl' or 'c' in 'rl' or (('1' in 'rl' or 'h' in 'rl') and occ <= 1.0))):   # r95: letter H: every plain schedule; r107: letter c: every plain schedule, the common head only
+    if _num(r['latency']) >= 1:   # the latency instance's head (the plain instance has none: rounds 93-95, 107)
         # r66 (srndgL, ncuH): once a launch the die's common head (HEAD_T1, rounds-probe intercept), and for a schedule of ONE CTA an SM the chain of
         # the rounds its CTAs stay in phase (PH_ROUNDS: probe fact a die, (w1x16's head - the common head) / its chain, srndgL T1; GB202 never
         # leaves phase: a share of the chain every round). Schedules with 2+ CTAs an SM overlap each other's chains: none.
-        hl = '4' in ('1', '2')                        # r67: both facts from ONE run (srndgL): HEAD_L / PH_L
         chip6 = c.get('chip')
         sub6 = (nfull < 1)
         if sub6:
             ln += c['l0']
         else:
-            ln += (HEAD_L if hl else HEAD_T1).get(chip6, 0.0)
-        if (occ <= 1.0 and not sub6):   # r107: letter c: no drain on plain
+            ln += HEAD_T1.get(chip6, 0.0)
+        if occ <= 1.0 and not sub6:
             rounds6 = max(ctas / slots, 1.0)
-            ph = ((PH_WAVES)).get(chip6)
+            ph = PH_WAVES.get(chip6)
             if ph is not None:
-                drain = trips * own
                 # r69 (the CTA-boundary drain, counted): with ONE CTA an SM nothing flies over the CTA boundary, so each in-phase wave idles the bus for a
                 # DRAM round trip (l0) + the epilogue at static clocks + the finish spread, bounded by ONE trip's chain (stall + window): not K-proportional.
                 drain = c['l0'] + out / (c['lat'] if c['lat'] else 1.0) + own
                 ln += drain * (ph[1] * rounds6 if ph[0] is None else min(ph[0], rounds6))
-    if pipe_on('r'):
-        rs = [rnd(part(ctas), tail, out)] if nfull < 1 else [rnd(occ, slots, out)] * int(nfull) + ([rnd(part(tail), tail, out)] if tail > 0 else [])
-        return ln + max(sum(x[0] for x in rs), sum(x[1] for x in rs) / eta() + rs[0][2])
     if nfull < 1:
         return ln + rnd(part(ctas), tail, out)
     return ln + rnd(occ, slots, out) + (nfull - 1.0) * rnd(occ, slots, out) + (rnd(part(tail), tail, out) if tail > 0 else 0.0)
@@ -561,14 +538,7 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
         # r105 (27B T1 cells under RF4P=rl: the four r8 variants tie at the bytes and the tie falls to w8r2, 18 % slower on GB203's vocab call): the bytes
         # and the static chain combined as the base combines them (two rate limits), so the variants keep the order of their counted chains.
         rnd = lambda nc: max(math.hypot(nc * Wp * R * pitch / bus / sd8, ch4), mem(nc))
-    if pipe_on('8'):
-        # r28: as rmma: the rounds' memory side at the sustained share, once a launch a DRAM latency, one trip's stall
-        # clocks and the code outside; or the chain every round (SM-bound: srnd r8 at T 4-8 on GA106 / GB20x).
-        h8 = l0 + _num(r['stall_sum']) / clk + out
-        return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + max(rounds * chain, ((rounds - 1) * mem(slots) + mem(last)) / eta() + h8)
-    return (launch_ns(c, P, ctas) + ((0.0)) + (0.0 if T <= 1 else pre)
-            + ((0.0))
-            + (rounds - 1) * rnd(slots) + rnd(last))
+    return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + (rounds - 1) * rnd(slots) + rnd(last)
 
 
 VEC_WARPS = 4                      # ggml_vec.cu kVecWarps
@@ -753,10 +723,6 @@ STREAM_DIE = {'ga102': 0.949, 'ga106': 0.947, 'ad106': 0.996, 'ad104': 0.989, 'a
 # r57: the once-a-launch head a die, ns: the rounds probes' intercept less the stream launch, rmma w1x16 at 1 CTA an SM, q6k add k 12288, T1
 # (srnd47_<card>, srnd47b_4070; AD102 from its T2 run). Residual by K and T in NOTES (27.11 01:00): k 4096 gated: AD106 4.1, GB203 2-3, GB202 ~0.
 HEAD_T1 = {'ad106': 2310.0, 'ad104': 3730.0, 'ad102': 5810.0, 'gb203': 540.0, 'gb202': 450.0, 'ga106': 4360.0, 'ga102': 4200.0}
-# r67: probe facts a die from srndgL_<card> (q4k swiglu k 4096, n = 16 x SMs x {1..32}, T1): HEAD_L = the intercept of the steady line (R >= 8) less the launch, mean over
-# the schedules of 2 CTAs an SM (w1x8, w1x4, w2x2; TU102: its latency ones, w1x4 and w2x2), ns; PH_L = (w1x16's head - HEAD_L) / its chain (stall + windows + outside):
-# the rounds a lone CTA an SM stays in phase. AD102 has no srndgL run: the Ada mean (BORROWED).
-HEAD_L = {'ga102': 5900.0, 'ga106': 6100.0, 'ad104': 1900.0, 'ad106': 3100.0, 'ad103': 3400.0, 'ad102': 2800.0, 'gb203': 3200.0, 'gb202': 1200.0, 'tu102': 9500.0}
 # r69: the in-phase waves of a lone CTA an SM: (srndgL w1x16 T1 head - HEAD_T1) / the counted drain a wave (l0 + static outside + one trip's stall and window):
 # a probe fact a die. AD103 takes AD104's common head, AD102 the Ada mean (BORROWED); TU102 has no HEAD_T1 (its whole head); GB202: the share of a drain every round.
 PH_WAVES = {'ga102': (2.3, None), 'ga106': (1.9, None), 'ad104': (2.9, None), 'ad106': (3.6, None), 'ad103': (3.7, None), 'ad102': (3.4, None), 'gb203': (0.9, None),
@@ -821,7 +787,7 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
         if vch in ('2', '4'):
             return max(sm, d)
         if vch == '3':                                  # the bus at its sustained share
-            return max(sm, d / eta())
+            return max(sm, d / STREAM_SHARE)
         return math.hypot(sm, d) if form == 'h' else sm + d if form == 's' else max(sm, d)
 
     return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + l0 + (rounds - 1) * rnd(ctas) + rnd(last)
