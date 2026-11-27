@@ -159,7 +159,7 @@ struct Priced {
 // -1 % end to end against the rules it replaces). AD102: rmma priced 12-16 % below its time at
 // T 2-4 (#1211). AD106 / GA106: w2x2 priced 8-19 % above its time, w1x8 1-18 % below (the wave
 // term, #1224). TU102 / TU104 / TU106: the activation-ring latency kernel priced 1.2-1.3x (#1183).
-inline constexpr std::string_view kHeldChips[] = {"ad102", "ad106", "ga106",
+inline constexpr std::string_view kHeldChips[] = {"ad102", "ad106", "lab-none",
                                                   "tu102", "tu104", "tu106"};
 
 // The widths the analyzer answers: decode and verify calls.
