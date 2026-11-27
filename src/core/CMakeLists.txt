@@ -15,7 +15,7 @@ configure_file(embedded_sm_rate_facts.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_sm_rate_facts.h @ONLY)
 # The probe facts a die the decode price reads (die_round_facts.cpp; tools/route_pick/analyzer.py
 # reads the same file).
-ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/die_round_facts.json NINFERNO_DIEROUND
+ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/die_round_facts.json NINFERNO_DIEFX
   NINFERNO_DIE_ROUND_FACTS_JSON)
 configure_file(embedded_die_round_facts.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_die_round_facts.h @ONLY)
