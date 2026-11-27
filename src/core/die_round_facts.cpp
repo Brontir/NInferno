@@ -31,7 +31,8 @@ std::map<std::string, RowsOpenCurve> curves_of(const Json& j, const std::string&
 
 std::optional<double> number(const Json& j, const char* key) {
     if (!j.contains(key)) return std::nullopt;
-    if (!j[key].is_number()) throw std::runtime_error(std::string("die_round_facts: ") + key + " is not a number");
+    if (!j[key].is_number())
+        throw std::runtime_error(std::string("die_round_facts: ") + key + " is not a number");
     return j[key].get<double>();
 }
 
@@ -41,8 +42,10 @@ DieRoundTable parse_die_round_facts(std::string_view json_text) {
     const Json root = Json::parse(json_text);
     DieRoundTable t;
     t.probe_row_bytes = root.at("probe_row_bytes").get<double>();
-    for (const auto& [a, v] : root.at("arch").at("stream_share").items()) t.arch_stream_share[a] = v.get<double>();
-    for (const auto& [a, v] : root.at("arch").at("row_flat").items()) t.arch_row_flat[a] = v.get<double>();
+    for (const auto& [a, v] : root.at("arch").at("stream_share").items())
+        t.arch_stream_share[a] = v.get<double>();
+    for (const auto& [a, v] : root.at("arch").at("row_flat").items())
+        t.arch_row_flat[a] = v.get<double>();
     for (const auto& [chip, j] : root.at("dies").items()) {
         DieRoundFacts d;
         d.chip           = chip;
@@ -53,7 +56,8 @@ DieRoundTable parse_die_round_facts(std::string_view json_text) {
         d.row_flat       = number(j, "row_flat");
         if (j.contains("rows_open")) {
             const Json& ro = j["rows_open"];
-            if (ro.contains("request") && ro["request"].is_string()) d.request = ro["request"].get<std::string>();
+            if (ro.contains("request") && ro["request"].is_string())
+                d.request = ro["request"].get<std::string>();
             if (ro.contains("curve")) d.curve = curves_of(ro["curve"], chip + " curve");
             if (ro.contains("pitch")) {
                 for (const auto& [pb, geo] : ro["pitch"].items()) {
