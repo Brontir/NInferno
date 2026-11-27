@@ -3502,13 +3502,16 @@ __launch_bounds__(Schedule::kThreads,
             constexpr int slot = decltype(slot_tag)::value;
             const int token    = token0 + group;
             const int base     = step * KStep;
-            const bool live    = token < a.tokens && base < a.k;
-            const __nv_bfloat16* src = x + (live ? static_cast<std::int64_t>(token) * a.ldx : 0);
+            // LAB ONLY (lab/rmma-act-nozfill, Fable r101): a dead token's lanes copy token 0's
+            // activations in full instead of zero-filling (its columns are never stored); the
+            // zero-fill stays only past the end of K. Tests the GA10x K-even stall on the copies.
+            const bool live_k        = base < a.k;
+            const __nv_bfloat16* src = x + (token < a.tokens ? static_cast<std::int64_t>(token) * a.ldx : 0);
 #pragma unroll
             for (int c = 0; c < J; ++c) {
                 cp_async_zfill<8>(&act_stage[slot][warp][c][lane],
                                   src + base + act_at<Decoder, J>(c, quad),
-                                  live ? 8 : 0);
+                                  live_k ? 8 : 0);
             }
             cp_commit();
         } else if constexpr (kAhead) {
