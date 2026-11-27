@@ -157,10 +157,11 @@ struct Priced {
 
 // The chips whose decode calls the analyzer does not answer yet (the switch's gate: no card below
 // -1 % end to end against the rules it replaces). AD102: rmma priced 12-16 % below its time at
-// T 2-4 (#1211). AD106 / GA106: w2x2 priced 8-19 % above its time, w1x8 1-18 % below (the wave
-// term, #1224). TU102 / TU104 / TU106: the activation-ring latency kernel priced 1.2-1.3x (#1183).
-inline constexpr std::string_view kHeldChips[] = {"ad102", "ad106", "ga106",
-                                                  "tu102", "tu104", "tu106"};
+// T 2-4 (#1211). GA106: w2x2 priced 8-19 % above its time, w1x8 1-18 % below (the wave term,
+// #1224). TU102 / TU104 / TU106: the activation-ring latency kernel priced 1.2-1.3x (#1183).
+// AD106 left under the closest set with PR 1247's kernels: its RTX 4060 Ti A/B against the rules,
+// C 1-8, worst -0.76 % (9B Q4_K_M C6), Q6_K / Q8_0 / gemma-4-12B Q4_K_M within -0.6 %.
+inline constexpr std::string_view kHeldChips[] = {"ad102", "ga106", "tu102", "tu104", "tu106"};
 
 // The widths the analyzer answers: decode and verify calls.
 inline constexpr std::int32_t kMaxTokens = 8;
