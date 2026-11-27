@@ -172,7 +172,7 @@ int route_tune_main(int argc, char** argv) {
                          "[--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
                          "[--rotate 0|1] [--describe 1] [--group-sums-plane 1] "
-                         "[--route-policy evidence|legacy] [--route-dir DIR]\n";
+                         "[--route-policy evidence|legacy] [--route-dir DIR] [--graph 1]\n";
             return 2;
         }
 
@@ -385,15 +385,18 @@ int route_tune_main(int argc, char** argv) {
         // 4096 x 4096 T 2: 0.67-0.70 us before each kernel; in the engine's graph -0.06..0.1), so
         // a two-kernel route (vec's quantizer, r8 / mmq's pre-pass) paid it twice. Capture needs a
         // stream of its own: the legacy default stream cannot be captured.
-        const bool graph = opt.count("--graph") && opt["--graph"] == "1";
+        const bool graph         = opt.count("--graph") && opt["--graph"] == "1";
         cudaStream_t tune_stream = nullptr;
         if (graph) CUDA_CHECK(cudaStreamCreateWithFlags(&tune_stream, cudaStreamNonBlocking));
+
         struct StreamReset {
             cudaStream_t s;
+
             ~StreamReset() {
                 if (s != nullptr) cudaStreamDestroy(s);
             }
         } stream_reset{tune_stream};
+
         TuneTimer timer(tune_stream, 1, samples);
         // Whether the run times a decode or verify width (T <= 16): the band sweep's points, or
         // the prefill widths from chunk / 2.
@@ -558,7 +561,8 @@ int route_tune_main(int argc, char** argv) {
                     sample(tune_stream);
                     CUDA_CHECK(cudaStreamSynchronize(tune_stream));
                     cudaGraph_t g = nullptr;
-                    CUDA_CHECK(cudaStreamBeginCapture(tune_stream, cudaStreamCaptureModeThreadLocal));
+                    CUDA_CHECK(
+                        cudaStreamBeginCapture(tune_stream, cudaStreamCaptureModeThreadLocal));
                     sample(tune_stream);
                     CUDA_CHECK(cudaStreamEndCapture(tune_stream, &g));
                     cudaGraphExec_t ge = nullptr;
