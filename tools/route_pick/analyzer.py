@@ -304,8 +304,7 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     own = w_dram + st + w_lat
 
     def rnd(cps, nc, o):                                   # a round of nc CTAs, cps of them on the busiest SM
-        slow = max(1.0, cps * rows_cta * pitch / c['l1']) ** P['G']
-        # r27: the same with the last flat point of the curve (the rows an SM keeps open at full rate): 48 rows x
+        # r27: the bytes law with the last flat point of the curve (the rows an SM keeps open at full rate): 48 rows x
         # 2720 B = 131 KB on GA102 / AD102 / AD106 / GB202 / GB203, which is the L1 today's law assumes; GA106
         # and TU102 stay flat about twice as far.
         flat = ROW_FLAT.get(c.get('chip'), ROW_FLAT.get(c['arch'], ROW_FLAT['']))
@@ -377,7 +376,6 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
         cl = c['cluster'][C]
         out += 2.0 * cl['sync'] + (C - 1) * cl['rank'][int(sets)]
     ln = launch_ns(c, P, ctas)
-    # r93: RF4P letter h: a PLAIN instance of one CTA an SM takes the once-a-launch head only (the same counted drain), its round stays today's plain round
     if _num(r['latency']) >= 1:   # the latency instance's head (the plain instance has none: rounds 93-95, 107)
         # r66 (srndgL, ncuH): once a launch the die's common head (HEAD_T1, rounds-probe intercept), and for a schedule of ONE CTA an SM the chain of
         # the rounds its CTAs stay in phase (PH_ROUNDS: probe fact a die, (w1x16's head - the common head) / its chain, srndgL T1; GB202 never
@@ -534,7 +532,6 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
         sd8 = STREAM_DIE.get(c.get('chip'), STREAM_ARCH.get(c['arch']))
         o4 = out / c['lat'] if c['lat'] else out
         ch4 = trips * trip + o4 + k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
-        rnd = lambda nc: max(nc * Wp * R * pitch / bus / sd8, ch4, mem(nc))
         # r105 (27B T1 cells under RF4P=rl: the four r8 variants tie at the bytes and the tie falls to w8r2, 18 % slower on GB203's vocab call): the bytes
         # and the static chain combined as the base combines them (two rate limits), so the variants keep the order of their counted chains.
         rnd = lambda nc: max(math.hypot(nc * Wp * R * pitch / bus / sd8, ch4), mem(nc))
@@ -689,36 +686,6 @@ def vec_counts(c, P, q, fmt, k, T):
     return tot, stall, o_tot, o_stall, trips, ld, body
 
 
-VEC_KF = 'C:/Users/MixaPC/analyzer_cov/kfvec'                                        # vec extracts with glb_waits (KF_TAIL=1)
-VEC_HAND = 'C:/Users/MixaPC/analyzer_r20/explore/r30_kf/hand_vec_bursts_sm86.txt'    # the stand-in until they land
-_VBURST = {}
-
-
-def vec_bursts(c, q):
-    """r34 (VCH=4/5): the bursts of global loads one trip of the vec row q waits on (sass_counts.global_waits, column
-    glb_waits), or None. From the arch's own vec extract (VEC_KF/sm_<arch>.txt) where it carries the column. STAND-IN
-    until then: the counts of the sm_86 SASS readable in the lab (few/sass/ka86.sass, an older build), for any arch."""
-    arch = c['arch']
-    if arch not in _VBURST:
-        tab = {}
-        for path, kb in ((os.path.join(os.environ.get('VEC_KF', VEC_KF), 'sm_%s.txt' % arch), 'bounded'),
-                         (os.environ.get('VEC_HAND', VEC_HAND), 'bnd')):
-            if tab or not os.path.exists(path):
-                continue
-            cols = None
-            with open(path, encoding='utf-8') as f:
-                for ln in f:
-                    w = ln.split()
-                    if w[:1] in (['columns'], ['family_columns']):
-                        cols = w[1:]
-                    elif cols and w and w[0] == 'vec' and len(w) == len(cols) and 'glb_waits' in cols and 'gated' in cols:
-                        r = dict(zip(cols, w))
-                        tab[(r['type'], r['T'], r['KS'], r['gated'], r.get(kb, r.get('bounded', r.get('bnd'))))] = _num(r['glb_waits'])
-        _VBURST[arch] = tab
-    return _VBURST[arch].get((q['type'], q['T'], q['KS'], q['gated'], q['bounded']))
-
-
-# r50: burst_wait E0 rows (analyzer_cov/bw/bw_<die>_N2act.txt, extra 0, C6): GB/s of pure weight streaming over the peak bus.
 STREAM_DIE = {'ga102': 0.949, 'ga106': 0.947, 'ad106': 0.996, 'ad104': 0.989, 'ad102': 0.977, 'gb203': 0.972, 'gb202': 0.959, 'tu102': 0.945}
 # r57: the once-a-launch head a die, ns: the rounds probes' intercept less the stream launch, rmma w1x16 at 1 CTA an SM, q6k add k 12288, T1
 # (srnd47_<card>, srnd47b_4070; AD102 from its T2 run). Residual by K and T in NOTES (27.11 01:00): k 4096 gated: AD106 4.1, GB203 2-3, GB202 ~0.
@@ -762,21 +729,6 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
         d = nc * bg / bus
         cps = math.ceil(nc / c['sms'])
         sm = sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, k / 1024.0, bw, ld, 1.0)
-        vch = ''
-        vch = '' if vch in ('6', '7', '8', '9', '10', '11', '12') else vch  # 6-12 price the whole launch (below); its fallback is today's round
-        if vch:
-            # r33 (ncuvg GA102: CPI flat 19-20 from T 4 to T 6, 76 % of it long-scoreboard; the L1TEX wait clocks a trip
-            # over the trip's counted waits on a global load = ~500 clocks = one DRAM latency): the warp's chain pays
-            # the unloaded DRAM stream latency (dram_stream_latency_ns, the l0 rmma's window starts from) at every wait
-            # ptxas left on a global load (the row's sb_waits_global), not one window a 1024-value slice.
-            chain = (trips * stall + o_stall) / c['clk'] + trips * _num(q.get('sb_waits_global')) * l0
-            if vch in ('4', '5'):
-                # r34 (ncu per-site stalls, GA102 / AD104): a trip has one DRAM-latency wait, the first consumer of the
-                # weight burst; each later burst (the per-token q8_1 activation loads) waits an L2 latency. Bursts =
-                # the generations of global loads the trip waits on (glb_waits).
-                nb = vec_bursts(c, q)
-                chain = sm if nb is None else (trips * stall + o_stall) / c['clk'] + trips * (l0 + max(nb - 1.0, 0.0) * c['l2lat_ns'])
-            sm = max(sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, 0.0, bw, ld, 1.0), chain)
         # The SM's L2 link (l2_bytes_per_sm_clock) carries every resident warp's trip bytes and, where the rows its
         # CTAs keep open and the activation exceed L1, the re-reads: the share of them past the bytes the SM keeps in
         # flight at a linear rate (ring_free) queues there.
@@ -784,10 +736,6 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
         reread = excess * load_bytes if opn + act > c['l1'] else 0.0
         reread *= max(0.0, 1.0 - c['ring_free'] / (cps * VEC_WARPS * bw))
         sm = max(sm, cps * VEC_WARPS * trips * (bw * (k / 1024.0) / trips + reread) / (c['l2bpc'] * c['clk']))
-        if vch in ('2', '4'):
-            return max(sm, d)
-        if vch == '3':                                  # the bus at its sustained share
-            return max(sm, d / STREAM_SHARE)
         return math.hypot(sm, d) if form == 'h' else sm + d if form == 's' else max(sm, d)
 
     return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + l0 + (rounds - 1) * rnd(ctas) + rnd(last)
@@ -797,7 +745,7 @@ VEC_MMA_TYPES = ('q4k', 'q5k', 'q6k')   # ggml_vec.cu vec_mma_supported (feat/11
 
 
 def vecmma_row(c, fmt, ep):
-    rows = (c['kf'].get('vecmma'))      # facts.py: the architecture's own section, or sm_90's as a named stand-in
+    rows = c['kf'].get('vecmma') or []      # facts.py: the architecture's own section, or sm_90's as a named stand-in
     t, g = MMQ_TYPE.get(fmt), str(int(ep == 'swiglu'))
     return next((r for r in rows if r['type'] == t and r['gated'] == g and _num(r['mma']) > 0), None)
 
@@ -830,7 +778,7 @@ def price_vec_mma(c, P, fmt, ep, n, k, T, bits, sets):
         return math.hypot(sm, d) if form == 'h' else sm + d
 
     return (launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + c['l0'] + (rounds - 1) * rnd(slots) + rnd(last)
-            + 0.0)
+)
 
 
 def mmq_j(T):
@@ -1018,8 +966,7 @@ def _price(gpu, F, shape, route, P):
             return None
         if inst == 'ks' and vec_ks(ep, k, inst) == 0:            # .ks names the unrolled instance: none at this K
             return None
-        pv = price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst)
-        return pv
+        return price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst)
     else:
         return None
     if r is None:
