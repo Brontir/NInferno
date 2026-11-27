@@ -631,15 +631,15 @@ int route_tune_main(int argc, char** argv) {
                     }
                     // How the sample was timed (#518): "copies", consecutive calls over `calls`
                     // weight copies between one event pair (a decode width under --rotate 1),
-                    // "graph", the same calls captured once into a CUDA graph and replayed (--graph 1),
-                    // "flushed", one call after the L2 flush, or "warm", one call where the timer
-                    // has no flush buffer (#574); the median of `samples` of them.
+                    // "graph", the same calls captured once into a CUDA graph and replayed (--graph
+                    // 1), "flushed", one call after the L2 flush, or "warm", one call where the
+                    // timer has no flush buffer (#574); the median of `samples` of them.
                     const bool rotated = over_copies && !spare.empty();
                     routes_csv << ',' << run_id << ',' << device_id << ','
                                << (graphed           ? "graph"
-                                   : rotated           ? "copies"
-                                   : timer.flushes()   ? "flushed"
-                                                       : "warm")
+                                   : rotated         ? "copies"
+                                   : timer.flushes() ? "flushed"
+                                                     : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
                                << samples << ',' << pci_id << ',';
                     // The launch the route makes for this call: its CTAs and threads per CTA
