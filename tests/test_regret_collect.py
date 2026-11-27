@@ -151,6 +151,17 @@ class Collect(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different protocols"):
             self.collect_new([self.new_pass(1, "x-1", rotated), self.new_pass(2, "x-2", flushed)])
 
+    def test_graph_samples_are_their_own_protocol(self):
+        # #1193: route_tune --graph 1 replays the decode sample as a CUDA graph; a pass of those
+        # rows is not one of stream-timed copies.
+        graph = [(4, "rmma.a", 4, "graph", 64), (4, "rmma.b", 5, "graph", 64)]
+        doc = self.collect_new([self.new_pass(1, "x-1", graph), self.new_pass(2, "x-2", graph)])
+        work = {c["id"]: c["workload"] for c in doc["cases"]}
+        self.assertIn("CUDA graph", work["q8.a16.store.n64.k64.T4"])
+        rotated = [(4, "rmma.a", 5, "copies", 64), (4, "rmma.b", 6, "copies", 64)]
+        with self.assertRaisesRegex(ValueError, "different protocols"):
+            self.collect_new([self.new_pass(1, "x-1", graph), self.new_pass(2, "x-2", rotated)])
+
     def test_warm_samples_are_their_own_protocol(self):
         # #574: a timer without a flush buffer times a warm L2; its rows say so, and a pass of
         # them is not one of flushed rows.

@@ -27,8 +27,9 @@ leaves only the ridge out). Older rows keep the class check alone.
 
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
-consecutive calls over weight copies, a decode width under --rotate 1; "flushed": one call after
-the L2 flush), or the files are refused. A CSV without these columns (written before route_tune
+consecutive calls over weight copies, a decode width under --rotate 1; "graph": a decode width's
+sample captured once into a CUDA graph, its replays timed, route_tune --graph 1, #1193; "flushed":
+one call after the L2 flush), or the files are refused. A CSV without these columns (written before route_tune
 named them) is refused: its passes could not be told apart.
 """
 import argparse
@@ -99,7 +100,7 @@ def identity(path, rows, column):
 def protocol_of(row):
     """How a row's time was taken: (protocol, calls per sample, samples)."""
     protocol = row["protocol"].strip()
-    if protocol not in ("copies", "flushed", "warm"):
+    if protocol not in ("copies", "graph", "flushed", "warm"):
         raise ValueError(f"unknown timing protocol {protocol!r}")
     return (protocol, int(row["calls"]), int(row["samples"]))
 
@@ -109,6 +110,9 @@ def describe(protocol):
     if kind == "copies":
         return (f"{calls} consecutive calls over weight copies (2x L2 or 128 MiB) between one event "
                 f"pair, median of {samples} samples")
+    if kind == "graph":
+        return (f"{calls} calls over weight copies captured once into a CUDA graph, its replays "
+                f"timed, median of {samples} samples")
     if kind == "warm":
         return f"one call with a warm L2 (the timer had no flush buffer), median of {samples} samples"
     return f"one call after an L2 flush, median of {samples} samples"

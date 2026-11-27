@@ -551,26 +551,41 @@ int route_tune_main(int argc, char** argv) {
                         generic::run_route(r, call, &workspace, s);
                     }
                 };
-                const bool graphed = graph && over_copies;
+                // A graph sample is the copies' one: a call without spare copies (--rotate 0, or
+                // one weight past 2x L2) keeps the flushed single call, and its row says so.
+                const bool graphed = graph && over_copies && !spare.empty();
                 double us_sum      = 0.0;
                 if (graphed) {
                     // One eager pass first: a route's lazy setup (its workspace, a table read)
-                    // must not happen inside the capture. The weights were written on the legacy
-                    // stream, which a non-blocking stream does not wait for.
-                    CUDA_CHECK(cudaDeviceSynchronize());
+                    // must not happen inside the capture.
                     sample(tune_stream);
                     CUDA_CHECK(cudaStreamSynchronize(tune_stream));
-                    cudaGraph_t g = nullptr;
+                    // The graph, its instance and the capture are released on every path: a
+                    // throw inside the capture ends it before the stream is destroyed.
+                    struct Captured {
+                        cudaStream_t s;
+                        cudaGraph_t g      = nullptr;
+                        cudaGraphExec_t ge = nullptr;
+                        bool capturing     = false;
+                        ~Captured() {
+                            if (capturing) {
+                                cudaGraph_t partial = nullptr;
+                                cudaStreamEndCapture(s, &partial);
+                                if (partial != nullptr) cudaGraphDestroy(partial);
+                            }
+                            if (ge != nullptr) cudaGraphExecDestroy(ge);
+                            if (g != nullptr) cudaGraphDestroy(g);
+                        }
+                    } cap{tune_stream};
                     CUDA_CHECK(
                         cudaStreamBeginCapture(tune_stream, cudaStreamCaptureModeThreadLocal));
+                    cap.capturing = true;
                     sample(tune_stream);
-                    CUDA_CHECK(cudaStreamEndCapture(tune_stream, &g));
-                    cudaGraphExec_t ge = nullptr;
-                    CUDA_CHECK(cudaGraphInstantiate(&ge, g, 0));
+                    cap.capturing = false;
+                    CUDA_CHECK(cudaStreamEndCapture(tune_stream, &cap.g));
+                    CUDA_CHECK(cudaGraphInstantiate(&cap.ge, cap.g, 0));
                     us_sum = timer.median_us(
-                        [&](cudaStream_t s) { CUDA_CHECK(cudaGraphLaunch(ge, s)); });
-                    CUDA_CHECK(cudaGraphExecDestroy(ge));
-                    CUDA_CHECK(cudaGraphDestroy(g));
+                        [&](cudaStream_t s) { CUDA_CHECK(cudaGraphLaunch(cap.ge, s)); });
                 } else {
                     us_sum = timer.median_us(sample);
                 }
@@ -616,14 +631,15 @@ int route_tune_main(int argc, char** argv) {
                     }
                     // How the sample was timed (#518): "copies", consecutive calls over `calls`
                     // weight copies between one event pair (a decode width under --rotate 1),
+                    // "graph", the same calls captured once into a CUDA graph and replayed (--graph 1),
                     // "flushed", one call after the L2 flush, or "warm", one call where the timer
                     // has no flush buffer (#574); the median of `samples` of them.
                     const bool rotated = over_copies && !spare.empty();
                     routes_csv << ',' << run_id << ',' << device_id << ','
-                               << (rotated && graphed ? "graph"
-                                   : rotated          ? "copies"
-                                   : timer.flushes()  ? "flushed"
-                                                      : "warm")
+                               << (graphed           ? "graph"
+                                   : rotated           ? "copies"
+                                   : timer.flushes()   ? "flushed"
+                                                       : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
                                << samples << ',' << pci_id << ',';
                     // The launch the route makes for this call: its CTAs and threads per CTA
