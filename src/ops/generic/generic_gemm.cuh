@@ -3680,6 +3680,13 @@ __launch_bounds__(Schedule::kThreads,
     }
     // The first step's staged activations: x copied only after that wait.
     if (s_begin + warp_k < steps) stage_act(Slot0{}, s_begin + warp_k);
+    // LAB ONLY (lab/rmma-stagger, r97): de-phase the K-warps of the latency instance (GA10x's K-even
+    // MIO-burst loss) by a warp- and CTA-dependent start delay. Timing only: no result changes.
+    if constexpr (Latency) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+        __nanosleep(static_cast<unsigned>((warp_k + blockIdx.x) & 3) * 160u);
+#endif
+    }
 #pragma unroll 1
     for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
         if (step + WK < steps) fetch(Slot1{}, step + WK);
