@@ -183,7 +183,8 @@ def written(opcode: str, operands: str) -> set[str]:
 
 def successors(body: list[Instruction]) -> list[list[int]]:
     """Control-flow successors of every instruction: a branch target, and the next instruction
-    unless the instruction is an unguarded branch or exit."""
+    unless the instruction is an unguarded branch or exit (BRA.DIV and BRA.CONV fall through,
+    #1241)."""
     at = {address: i for i, (address, _, _, _) in enumerate(body)}
     out = []
     for i, (_, opcode, operands, guarded) in enumerate(body):
@@ -192,7 +193,8 @@ def successors(body: list[Instruction]) -> list[list[int]]:
             target = re.search(r"0x([0-9a-f]+)\s*$", operands)
             if target and int(target.group(1), 16) in at:
                 nexts.append(at[int(target.group(1), 16)])
-            if guarded or opcode.startswith("BRA.DIV") or "P" in operands.split("0x")[0]:
+            falls = opcode.startswith(("BRA.DIV", "BRA.CONV"))
+            if guarded or falls or "P" in operands.split("0x")[0]:
                 nexts.append(i + 1)
         elif not (opcode.startswith(("EXIT", "RET", "KILL")) and not guarded):
             nexts.append(i + 1)
@@ -283,7 +285,8 @@ def before_wait(body: list[Instruction]) -> list[int]:
             target = re.search(r"0x([0-9a-f]+)\s*$", operands)
             if target and int(target.group(1), 16) in at:
                 stack.append(at[int(target.group(1), 16)])
-            if guarded or opcode.startswith("BRA.DIV") or "P" in operands.split("0x")[0]:
+            falls = opcode.startswith(("BRA.DIV", "BRA.CONV"))
+            if guarded or falls or "P" in operands.split("0x")[0]:
                 stack.append(i + 1)
             continue
         if opcode.startswith(("EXIT", "RET", "KILL")) and not guarded:

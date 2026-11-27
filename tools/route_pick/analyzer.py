@@ -93,6 +93,8 @@ R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
 R8_GROUP = {'W4a8Q45K': 2, 'W4a8Q6K': 4, 'W4a8Q3K': 4, 'W4a8Q2K': 4}
 # generic_w4a8.cuh: the codecs whose blocks carry a min term (kMin: the activation's block sums travel with it) and the
 # codebook codecs' grid words (kGridWords), which r8_kernel stages in shared memory below sm_80.
+# generic_rmma_decoders.h: the register-MMA decoders with a min term (MinTermOf: the adds instance's form).
+RMMA_MIN_TERM = ('GgmlQ45KQuadDecoder<4>', 'GgmlQ45KQuadDecoder<5>', 'GgmlQ2KDecoder', 'Ggml32Decoder<1>', 'Ggml32Decoder<3>')
 R8_SUMS = ('W4a8Q45K<4>', 'W4a8Q45K<5>', 'W4a8Ggml32<1>', 'W4a8Ggml32<3>')
 R8_GRID_WORDS = {'W4a8Iq3Xxs': 256, 'W4a8Iq3S': 512, 'W4a8Iq1S': 2048, 'W4a8Iq1M': 2048, 'W4a8Iq2Xxs': 512,
                  'W4a8Iq2Xs': 1024, 'W4a8Iq2S': 2048}
@@ -108,6 +110,13 @@ def _num(v, d=0.0):
         return d if x != x else x
     except (TypeError, ValueError):
         return d
+
+
+def rmma_adds_launched(c, fmt, N):
+    """Whether the launch takes the adds instance (RmmaSums 1, the kernel-facts row sums=1) of the register-MMA kernel:
+    launch_rmma_schedule runs it for a min-term decoder at four token tiles or more where the call asks for the adds
+    (rmma_add_sums: native BF16 MMA, sm_80 on, outside the invariant and prefill profiles) (#1243)."""
+    return N >= 4 and c['cc'] >= 80 and RMMA_DEC.get(fmt) in RMMA_MIN_TERM
 
 
 def kf_row(kf, fam, **want):
@@ -762,8 +771,11 @@ def _price(gpu, F, shape, route, P):
         M, N, A, B, C = (int(x or 1) for x in m.groups())
         if C > 1 and (c['cc'] < 90 or C not in c.get('cluster', {})):   # clusters are sm_90+, priced from their facts
             return None
-        key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=0)
+        adds = rmma_adds_launched(c, fmt, N)
+        key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=1 if adds else 0)
         r = kf_row(kf, 'rmma', latency=0, **key)
+        if r is None and adds:
+            r = kf_row(kf, 'rmma', latency=0, **dict(key, sums=0))
         if r is not None and N == 1 and latency_launched(c, ep, A, B, M, n, r, kf_row(kf, 'rmma', latency=1, **key), C):
             r = kf_row(kf, 'rmma', latency=1, **key)                       # the latency instance is the one launched
         return None if r is None else price_rmma(c, P, r, n, k, T, sets * k * bits / 8.0, M, N, A, B, C, sets=sets)

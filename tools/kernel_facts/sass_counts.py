@@ -11,11 +11,13 @@ while the cycles each pipe takes are the card's facts.
 How the loop is found (`loop_counts`):
 1. The function's instructions are parsed from `cuobjdump -sass` text: offset, guard predicate,
    opcode, operands. A branch's target is the trailing hex offset of its operands.
-2. Basic blocks and their edges: a block ends at a branch (BRA, BRA.U, BRA.DIV), an EXIT or a
-   RET; a guarded or predicated branch also falls through (one on PT / UPT does not, one on !PT
-   is never taken); CALL falls through (the callee is outside the loop's count, see below); an
-   indirect branch (BRX, JMX, their uniform forms) makes the control flow unknown and the counts
-   `loops 0`. Blocks the entry does not reach (a callee, the trailing self-branch) take no part.
+2. Basic blocks and their edges: a block ends at a branch (BRA, BRA.U, BRA.DIV, BRA.CONV), an
+   EXIT or a RET; a guarded or predicated branch also falls through (one on PT / UPT does not,
+   one on !PT is never taken), so do BRA.DIV and BRA.CONV (whose fall-through, the emulation a
+   converged warp skips, the counted iteration does not take); CALL falls through (the callee
+   is outside the loop's count, see below); an indirect branch (BRX, JMX, their uniform forms)
+   makes the control flow unknown and the counts `loops 0`. Blocks the entry does not reach (a
+   callee, the trailing self-branch) take no part.
 3. Dominators over the blocks; a back edge is an edge into a block that dominates its source;
    the natural loop of a back edge is its header plus every block that reaches the source
    without passing the header; back edges to one header are one loop.
@@ -341,8 +343,12 @@ def branch_predicate(operands):
 
 def branch_edges(guarded, opcode, operands):
     """(takes the target, may fall through) of a branch: a guard or a predicate operand makes it
-    conditional, PT / UPT unconditional, !PT / !UPT never taken, BRA.DIV divergent."""
-    if opcode.startswith("BRA.DIV"):
+    conditional, PT / UPT unconditional, !PT / !UPT never taken, BRA.DIV divergent. BRA.CONV (a
+    runtime-mask shfl / warpsync, #1241) may fall through as well: a converged warp takes it (to
+    the inline SHFL of a shuffle, past the emulation of a warpsync); the fall-through is the
+    emulation (MOV, the CALL of its callee placed after the last EXIT, a BRA past the inline
+    SHFL). longest_iteration counts the taken side."""
+    if opcode.startswith(("BRA.DIV", "BRA.CONV")):
         return True, True
     predicate = branch_predicate(operands)
     if predicate in ("!PT", "!UPT"):
@@ -351,13 +357,63 @@ def branch_edges(guarded, opcode, operands):
     return True, conditional
 
 
+def tail_reached(body, last_exit):
+    """Whether every instruction after the function's last unconditional EXIT (index `last_exit`)
+    is reached from the function's entry. The walk starts at the first instruction and follows
+    each instruction's explicit target (a BRA / JMP that can be taken, a CALL) and its
+    fall-through (branch_edges); an indirect branch before that EXIT enters every instruction
+    after it up to the EXIT (switch_targets' own over-approximation of its cases), one in the tail
+    ends the run (successors would give it switch targets), which errs toward unknown flow. A
+    jump-table case placed after that EXIT would be entered only by the table, so switch_targets
+    would leave it out of the counts silently (#1231); such an instruction makes the flow unknown
+    instead. Code the entry never reaches enters nothing: neither a dead block before the EXIT
+    that branches into the tail nor a local back edge inside an unentered part of the tail (BRA
+    0x500 at 0x510). NOPs and the closing self-branch (BRA to itself, the padding) are exempt."""
+    def edge(k):
+        """(the explicit target offset or None, may fall through) of instruction k."""
+        _, guarded, opcode, operands, *_ = body[k]
+        base = base_opcode(opcode)
+        target = None
+        if base == "CALL" or (base in ("BRA", "JMP") and branch_edges(guarded, opcode, operands)[0]):
+            m = TARGET.search(operands)
+            target = int(m.group(1), 16) if m else None
+        if base in ("BRA", "JMP"):
+            falls = branch_edges(guarded, opcode, operands)[1]
+        else:
+            falls = not (base.startswith(("BRX", "JMX")) or (base in ("EXIT", "RET", "KILL") and not guarded))
+        return target, falls
+
+    tail = range(last_exit + 1, len(body))
+    index = {body[k][0]: k for k in range(len(body))}
+    reached, work = set(), [0] if body else []
+    while work:
+        k = work.pop()
+        if k in reached:
+            continue
+        reached.add(k)
+        target, falls = edge(k)
+        if target in index:
+            work.append(index[target])
+        if falls and k + 1 < len(body):
+            work.append(k + 1)
+        if k < last_exit and base_opcode(body[k][2]).startswith(("BRX", "JMX")):
+            work.extend(range(k + 1, last_exit + 1))
+    for k in tail:
+        offset, opcode = body[k][0], base_opcode(body[k][2])
+        padding = opcode == "NOP" or (opcode == "BRA" and edge(k)[0] == offset)
+        if k not in reached and not padding:
+            return False
+    return True
+
+
 def switch_targets(body, i):
     """The possible targets of the indirect branch at `i`, a compiled switch (sm_100 / sm_120a
     compile one so, e.g. the routed expert kernels' epilogue): the jump table is in a constant
     bank, so its entries are not read, and the targets are over-approximated by every instruction
     after the branch, up to the reconvergence point R of the BSSY that opens its region where one
     stands within eight instructions before it (BSSY Bn, R), else to the function's last
-    unconditional EXIT (its end where no such EXIT follows). All
+    unconditional EXIT (its end where no such EXIT follows; None where code after that EXIT is
+    entered by no explicit edge, tail_reached, #1231). All
     forward: no edge back, so no loop is made, and a loop the branch sits outside of is counted as
     before. None (unknown flow, the counts left empty) where no instruction follows, or where a
     branch among the targets jumps back (a loop entered from the switch could lose its header's
@@ -379,6 +435,8 @@ def switch_targets(body, i):
                  if base_opcode(body[k][2]) == "EXIT" and not body[k][1]]
         if exits:
             end = body[exits[-1]][0]
+            if not tail_reached(body, exits[-1]):
+                return None
     targets = [k for k in range(i + 1, len(body)) if end is None or body[k][0] <= end]
     for k in targets:
         if base_opcode(body[k][2]) in ("BRA", "JMP"):
@@ -503,14 +561,28 @@ def natural_loops(edges, dom, preds, live):
     return loops
 
 
-def longest_iteration(edges, dom, header, members, weight):
+def cold_edges(body, blocks):
+    """The edges (block, successor) a counted iteration does not take: a BRA.CONV's fall-through,
+    the emulation path a converged warp skips (branch_edges). Live all the same: code outside the
+    counted loop's blocks counts it among the outside alternatives, as it does BRA.DIV's stubs."""
+    starts = {s: b for b, (s, _) in enumerate(blocks)}
+    return frozenset((b, starts[e + 1]) for b, (_, e) in enumerate(blocks)
+                     if body[e][2].startswith("BRA.CONV") and e + 1 in starts)
+
+
+def longest_iteration(edges, dom, header, members, weight, cold=frozenset()):
     """The blocks of one iteration of the loop `members` (headed by `header`) on its heaviest
     path: from the header, over the loop's forward edges (the back edges dropped), to a block
     that branches back to the header, maximising the sum of `weight(block)` (a tuple, compared
     lexicographically). The body without its back edges is a DAG for the code nvcc emits; an
-    MMA-free loop nested in the body is walked once."""
-    forward = {b: [s for s in edges[b] if s in members and not is_back_edge(dom, b, s)]
-               for b in members}
+    MMA-free loop nested in the body is walked once. `cold`: edges (block, successor) the path
+    does not take (a BRA.CONV's fall-through into the emulation a converged warp skips, cold_edges)
+    unless it is the block's only forward edge in the loop."""
+    forward = {}
+    for b in members:
+        out = [s for s in edges[b] if s in members and not is_back_edge(dom, b, s)]
+        warm = [s for s in out if (b, s) not in cold]
+        forward[b] = warm or out
     order, seen, stack = [], {header}, [(header, iter(forward[header]))]
     while stack:  # iterative depth-first walk, post-order
         b, it = stack[-1]
@@ -1051,7 +1123,8 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
                       if not any(base_opcode(body[i][2]) in excluded for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
-    iterations = {h: longest_iteration(edges, dom, h, loops[h], weight) for h in innermost}
+    cold = cold_edges(body, blocks)
+    iterations = {h: longest_iteration(edges, dom, h, loops[h], weight, cold) for h in innermost}
     iterations = {h: p for h, p in iterations.items() if p}
     out.loops = len(iterations)
     if not iterations:

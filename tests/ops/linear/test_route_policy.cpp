@@ -805,7 +805,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("no shipped route-table directory");
         }
         std::map<std::string, Json> written;
-        int borrowed = 0, transferred = 0, measured = 0, kept_boundary = 0;
+        int borrowed = 0, transferred = 0, measured = 0, kept_boundary = 0, analyzer = 0;
         for (const RegretBoard& b : kRegretBoards) {
             if (!only.empty() && only != b.name) continue;
             const auto own = own_table(shipped, b);
@@ -823,6 +823,7 @@ int main(int argc, char** argv) {
                 kept_boundary += t.kept_mmq_boundary;
                 transferred += t.transferred;
                 measured += t.measured;
+                analyzer += t.analyzer;
                 std::cout << b.name << " " << tables << " (" << kBuildSet << "): " << t.cells
                           << " cells; legacy " << t.borrowed << " borrowed, " << t.transferred
                           << " transferred, " << t.measured << " measured, " << t.kept_rules
@@ -846,6 +847,12 @@ int main(int argc, char** argv) {
         }
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");
+        }
+        // The analyzer's cells are exempt from the "a Measured answer moved" check (check_cell): a
+        // grid where no cell reaches the analyzer would leave that exemption and the T 1-8 switch
+        // untested (#1214 item 3).
+        if (only.empty() && analyzer == 0) {
+            fail("no cell answered by the analyzer's list in the grid: the T 1-8 switch is idle");
         }
         // The MMQ boundary must keep some demoted entry over the grid, or its exception above is
         // idle. F1's A/B lost on q4k swiglu 12288x4096 at T 12, 16; on a board whose pick file

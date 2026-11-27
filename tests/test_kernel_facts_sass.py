@@ -187,6 +187,8 @@ class LoopFinder(unittest.TestCase):
         body = body_of(KERNEL)
         self.assertEqual(sc.branch_edges(False, "BRA.U", "!UP0, 0x530"), (True, True))
         self.assertEqual(sc.branch_edges(False, "BRA.DIV", "~URZ, 0x530"), (True, True))
+        self.assertEqual(sc.branch_edges(False, "BRA.CONV", "0x230"), (True, True))  # sm_75
+        self.assertEqual(sc.branch_edges(False, "BRA.CONV", "UR6, 0x270"), (True, True))  # sm_86
         self.assertEqual(sc.branch_edges(False, "BRA.U", "UPT, 0x530"), (True, False))
         self.assertEqual(sc.branch_edges(False, "BRA", "!PT, 0x530"), (False, True))
         self.assertEqual(sc.branch_edges(True, "BRA", "0x530"), (True, True))
@@ -195,6 +197,36 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(succ[7], [8])  # BRA 0x100 at index 7: the loop header, index 8
         self.assertIsNone(sc.successors(body + [(0x530, False, "BRXU", "UR4 -0x530")]))
         self.assertIsNone(sc.successors(body + [(0x530, False, "BRA", "0x9000")]))
+
+    def test_runtime_mask_shuffle_in_the_loop(self):
+        # A runtime-mask __shfl_sync in the K loop as ptxas lays it out (nvcc 13.2, sm_86): a
+        # converged warp takes BRA.CONV to the inline SHFL; the fall-through is the emulation
+        # (MOV, the CALL of the callee after the last EXIT, a BRA past the SHFL). The emulation
+        # is live (#1241) but the counted iteration takes the converged side: FFMA, BRA.CONV,
+        # SHFL, ISETP, BRA.
+        conv = [(0x000, "MOV R1, R2 ;"), (0x010, "FFMA R4, R5, R6, R4 ;"),
+                (0x020, "BRA.CONV UR6, 0x060 ;"), (0x030, "MOV R10, 0x50 ;"),
+                (0x040, "CALL.REL.NOINC 0x0b0 ;"), (0x050, "BRA 0x070 ;"),
+                (0x060, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"),
+                (0x070, "ISETP.GE.AND P0, PT, R1, R3, PT ;"), (0x080, "@!P0 BRA 0x010 ;"),
+                (0x090, "EXIT ;"), (0x0a0, "BRA 0x0a0 ;"),
+                (0x0b0, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x0c0, "RET.REL.NODEC R20 0x0 ;")]
+        body = body_of(conv)
+        c = sc.loop_counts(body, tiles=1)
+        self.assertEqual(c.loops, 1)
+        self.assertEqual((c.total, c.shfl), (5, 1))
+        succ = sc.successors(body)
+        self.assertEqual(sorted(succ[2]), [3, 6])  # BRA.CONV: the SHFL and the emulation's MOV
+        self.assertTrue(sc.tail_reached(body, 9))  # the callee, by the emulation's CALL
+        # __syncwarp(mask): nothing on the taken side, the emulation is MOV, CALL: the
+        # iteration is FFMA, BRA.CONV, ISETP, BRA, as a converged warp runs it.
+        sync = [(o, t) for o, t in conv if o not in (0x050, 0x060)]
+        sync = [(o, "BRA.CONV UR6, 0x070 ;" if o == 0x020 else t) for o, t in sync]
+        self.assertEqual(sc.loop_counts(body_of(sync), tiles=1).total, 4)
+        # A BRA.CONV whose target lies outside the loop: its fall-through is the only way round,
+        # so the iteration takes it rather than losing the loop.
+        out = [(o, "BRA.CONV UR6, 0x090 ;" if o == 0x020 else t) for o, t in sync]
+        self.assertEqual(sc.loop_counts(body_of(out), tiles=1).loops, 1)
 
     def test_no_loop_and_unknown_flow(self):
         straight = [l for l in KERNEL if l[0] not in (0x2f0, 0x300)]
@@ -218,21 +250,80 @@ class LoopFinder(unittest.TestCase):
                          (plain.loops, plain.k_iter, plain.mma, plain.total))
         self.assertGreater(counted.outside_total, 0)
         # Without the BSSY the targets run to the function's last unconditional EXIT: the callee
-        # after it is entered by its CALL alone.
-        lines = [(o, "FMUL R36, R36, R30 ;" if o == 0x400 else t) for o, t in lines]
+        # after it is entered by its CALL alone (the CALL before the switch here, as the BRXU
+        # took its place).
+        lines = [(o, "CALL.REL.NOINC 0x500 ;" if o == 0x400 else t) for o, t in lines]
         body = body_of(lines)
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
         self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], 0x430)
         # sm_70's out-of-line BRA.DIV stubs after that EXIT branch back into the K loop (#1226:
         # the MoE activation switch became a BRX there): no target of the switch, so the flow is
         # known and the loop counted as without the switch.
-        stub = [(0x530, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x540, "BRA 0x160 ;")]
-        body = body_of(lines + stub)
+        # (Entered by the loop's BRA.DIV, here the guarded branch at 0x170 in place of the PRMT,
+        # and back to the instruction after it.)
+        stub = [(0x530, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x540, "BRA 0x180 ;")]
+        div = [(o, "@!P5 BRA.DIV 0x530 ;" if o == 0x170 else t) for o, t in lines]
+        body = body_of(div + stub)
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
         self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], 0x430)
         stubbed = sc.loop_counts(body, tiles=2)
         self.assertEqual((stubbed.loops, stubbed.k_iter, stubbed.mma),
                          (plain.loops, plain.k_iter, plain.mma))
+        # A case ptxas placed after that EXIT, entered by the jump table alone (it branches back
+        # to the reconvergence point): no explicit edge reaches it, so the flow is unknown rather
+        # than the case dropped from the counts (#1231).
+        case = [(0x530, "FADD R36, R36, R30 ;"), (0x540, "BRA 0x420 ;")]
+        body = body_of(lines + case)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertIsNone(sc.switch_targets(body, i))
+        self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
+        # The same case as a local loop (its own back edge, BRA 0x530 at 0x540): an edge from
+        # inside the unentered tail enters nothing, so the flow stays unknown.
+        loop = [(0x530, "FADD R36, R36, R30 ;"), (0x540, "@P2 BRA 0x530 ;"), (0x550, "BRA 0x420 ;")]
+        body = body_of(lines + loop)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertIsNone(sc.switch_targets(body, i))
+        # A dead block before the switch (after an unconditional BRA, entered by nothing) whose
+        # branch lands on that case enters nothing: the walk starts at the entry.
+        dead = body_of([(0x000, "MOV R1, R2 ;"), (0x010, "BRA 0x030 ;"), (0x020, "BRA 0x060 ;"),
+                        (0x030, "BRXU UR4 -0x40 ;"), (0x040, "FADD R36, R36, R30 ;"),
+                        (0x050, "EXIT ;"), (0x060, "FADD R36, R36, R30 ;"), (0x070, "BRA 0x040 ;")])
+        self.assertFalse(sc.tail_reached(dead, 5))
+        live = [(o, "@P0 BRA 0x020 ;" if o == 0x010 else t) for o, t in
+                [(0x000, "MOV R1, R2 ;"), (0x010, ""), (0x020, "BRA 0x060 ;"), (0x030, "BRXU UR4 -0x40 ;"),
+                 (0x040, "FADD R36, R36, R30 ;"), (0x050, "EXIT ;"), (0x060, "FADD R36, R36, R30 ;"),
+                 (0x070, "BRA 0x040 ;")]]
+        self.assertTrue(sc.tail_reached(body_of(live), 5))
+        # A runtime-mask shuffle: BRA.CONV, its fall-through MOV and the CALL of the callee after
+        # the last EXIT (ptxas, sm_75 / sm_86): the callee is reached.
+        conv = body_of([(0x000, "BRA.CONV 0x030 ;"), (0x010, "MOV R2, 0x40 ;"),
+                        (0x020, "CALL.REL.NOINC 0x060 ;"), (0x030, "BRXU UR4 -0x40 ;"),
+                        (0x040, "FADD R36, R36, R30 ;"), (0x050, "EXIT ;"),
+                        (0x060, "SHFL.IDX PT, R3, R3, R4, 0x1f ;"), (0x070, "RET.REL.NODEC R20 0x0 ;")])
+        self.assertTrue(sc.tail_reached(conv, 5))
+        # A case between the switch and the EXIT, entered by the jump table alone, that calls a
+        # callee after the EXIT: the switch enters it, so its CALL reaches the callee.
+        case_call = body_of([(0x000, "MOV R1, R2 ;"), (0x010, "BRXU UR4 -0x20 ;"), (0x020, "EXIT ;"),
+                             (0x030, "CALL.REL.NOINC 0x060 ;"), (0x040, "BRA 0x050 ;"), (0x050, "EXIT ;"),
+                             (0x060, "FADD R36, R36, R30 ;"), (0x070, "RET.REL.NODEC R20 0x0 ;")])
+        self.assertTrue(sc.tail_reached(case_call, 5))
+        # tail_reached follows successors' edges: a callee's branch with a predicate operand, a
+        # guarded RET and an unguarded BRA.DIV fall through, the closing self-branch's NOP padding is exempt;
+        # code after an unguarded KILL is entered by nothing.
+        callee = [(0x500, "BRA.U !UP0, 0x520 ;"), (0x510, "FADD R36, R36, R30 ;"),
+                  (0x520, "@P1 RET.REL.NODEC R20 0x0 ;"), (0x530, "BRA.DIV ~URZ, 0x550 ;"),
+                  (0x540, "RET.REL.NODEC R20 0x0 ;"), (0x550, "RET.REL.NODEC R20 0x0 ;"),
+                  (0x560, "BRA 0x560 ;"), (0x570, "NOP ;"), (0x580, "NOP ;")]
+        tail = [l for l in lines if l[0] < 0x500] + callee
+        body = body_of(tail)
+        last = max(k for k, x in enumerate(body) if x[2] == "EXIT" and not x[1])
+        self.assertTrue(sc.tail_reached(body, last))
+        killed = [l for l in lines if l[0] < 0x500] + [
+            (0x500, "MUFU.RCP R36, R36 ;"), (0x510, "KILL ;"),
+            (0x520, "FADD R36, R36, R30 ;"), (0x530, "BRA 0x420 ;")]
+        body = body_of(killed)
+        last = max(k for k, x in enumerate(body) if x[2] == "EXIT" and not x[1])
+        self.assertFalse(sc.tail_reached(body, last))
         # A switch before the K loop (the loop's back edge among its targets): unknown flow.
         early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
         body = body_of(early)

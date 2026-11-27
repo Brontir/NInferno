@@ -41,7 +41,8 @@ def iteration(body):
     marked = {h: sum(weight(b)[0] for b in m) for h, m in loops.items()}
     cand = [h for h, n in marked.items() if n > 0]
     inner = [h for h in cand if not any(o != h and loops[o] < loops[h] for o in cand)]
-    its = {h: sc.longest_iteration(edges, dom, h, loops[h], weight) for h in inner}
+    cold = sc.cold_edges(body, blocks)
+    its = {h: sc.longest_iteration(edges, dom, h, loops[h], weight, cold) for h in inner}
     its = {h: p for h, p in its.items() if p}
     if not its:
         return []

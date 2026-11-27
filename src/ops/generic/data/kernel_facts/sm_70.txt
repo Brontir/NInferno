@@ -20,8 +20,8 @@
 #     --nvcc <version> -o src/ops/generic/data/kernel_facts/sm_70.txt
 arch 70
 nvcc 12.8.93
-flags unknown
-source unknown
+flags -O3 -DNDEBUG rdc=ON lineinfo=OFF ptx=OFF
+source 5cdeae03ef80616f9855cc34c8e6c5c5ada624123c63aae525bffb4f6c1597e1
 kernels 2378
 columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 128 8 0 1536 1 64 4 0 HMMA.16816.F32.BF16.EMU 6 3072 0 0 0 0 0 0 0 0 0 0 1 98 0 0 26 135 421 9 0 788 1860 67 1
