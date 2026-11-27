@@ -174,8 +174,17 @@ double pro(const KernelFacts& f, int PrologueCounts::* m) {
 
 std::string mma_shape(const KernelFacts& f) { return f.loop ? f.loop->mma_shape : std::string(); }
 
+// Whether the launch takes the adds instance (RmmaSums 1) of the call's register-MMA kernel:
+// launch_rmma_schedule runs it for a min-term decoder at four token tiles or more where the call
+// asks for the adds (rmma_add_sums: native BF16 MMA, sm_80 on, outside the invariant and prefill
+// profiles; the analyzer prices the decode profile) (#1243).
+bool rmma_adds_launched(const Card& c, QType q, int k, int N) {
+    const auto codec = codec_of(q);
+    return codec && N >= 4 && c.cc >= 80 && detail::generic::rmma_decoder_of(*codec, k).min_term;
+}
+
 std::optional<KernelFacts> rmma_row(const Card& c, const std::string& decoder, int A, int B, int M,
-                                    int N, int C, Epilogue ep, bool latency) {
+                                    int N, int C, Epilogue ep, bool latency, bool adds = false) {
     kf::RmmaKernelKey key;
     key.decoder  = decoder;
     key.warps_m  = A;
@@ -185,9 +194,10 @@ std::optional<KernelFacts> rmma_row(const Card& c, const std::string& decoder, i
     key.cluster  = C;
     key.epilogue = epi_of(ep);
     key.latency  = latency;
-    key.sums     = 0;
+    key.sums     = adds ? 1 : 0;
     auto r       = kf::rmma_facts(c.arch, key);
     if (r && (!has_loop(*r) || r->registers <= 0 || !r->loop || r->loop->k_iter <= 0)) r.reset();
+    if (!r && adds) return rmma_row(c, decoder, A, B, M, N, C, ep, latency, false);
     return r;
 }
 
@@ -1013,7 +1023,8 @@ std::optional<double> price(const Card& c, const Call& call, std::string_view ro
         if (m->C > 1 && (c.cc < 90 || c.cluster(m->C) == nullptr)) return std::nullopt;
         const std::string dec = rmma_decoder(call.qtype, ik);
         if (dec.empty()) return std::nullopt;
-        auto r = rmma_row(c, dec, m->A, m->B, m->M, m->N, m->C, ep, false);
+        auto r = rmma_row(c, dec, m->A, m->B, m->M, m->N, m->C, ep, false,
+                          rmma_adds_launched(c, call.qtype, ik, m->N));
         if (!r) return std::nullopt;
         bool lat_row = false;
         if (m->N == 1) {
