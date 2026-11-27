@@ -30,6 +30,7 @@ The price (ns):
 FITTED: G alone. Not priced (None): the W4A8, tiled and staged tiles.
 """
 import math
+import os
 import re
 
 # The analyzer's settings: G is FITTED (round 9's value), the rest choose a form, no number.
@@ -44,15 +45,19 @@ P = dict(G=0.1240,       # FITTED, the one number left at T 1-8 (round 9's): exp
          VSUB=1)         # on (1) / off (0). sm_70: every rmma.* route is the Volta substitute the launch takes, priced from its counted kernel
 L1_MIN_KIB = 28.0                  # SET: the L1 an SM keeps beside its shared memory
 PARTITIONS = 4.0                   # tensor partitions of an SM
-# Counted (no fit): the SASS instructions of one emulated MMA call (sm_70, nvcc 12.8.93, generic_gemm_bf16.cu.o:
-# mma_bf16_fma_call, 551 instructions: FFMA 120, MOV 146, IMAD 88, LOP3 84, SHF 32, SHFL 32, CALL 32 to the 16-instruction
-# __cuda_sm70_shflsync_idx_p, whose bodies are not added). #1165.
-EMU_CALL = {'HMMA.16816.F32.BF16.EMU': 551.0}
 # Measured (few/bw/emu.cu, the product's call body (552 instructions, 32 shflsync calls, -rdc), Quadro GV100, 24.11):
 # a warp's ns a call with 1 / 2 / 4 independent accumulator chains (563.2 / 437.0 / 377.6, warps_sm 1), and the issue
 # cost a call, 4 partitions x 1627 MHz / the SM's saturated 18.86 calls a us (16 warps, 4 chains) = 345 instructions.
 EMU_LAT_NS = {1: 563.2, 2: 437.0, 3: 437.0, 4: 377.6}
 EMU_ISSUE = 4.0 * 1627.0 / 18.86
+# r26 lab: DRAM row activations, 1e9 a second = a ns (probe stride11 Acont u 32, NOTES 24.11 13:35-13:40, one run a die;
+# the 3060 rerun 3.58). A probe fact of the die with its memory, to move into sm_rate_facts.json.
+ROW_ACT = dict(ga102=8.38, ad104=4.07, ad102=8.17, gb202=18.15, gb203=10.42, ad106=4.61, ga106=3.57, tu102=8.69, gv100=8.89)
+# The last point at full rate (0.92-0.95 of peak) of the same curves: 48 rows on GA102, AD102, AD106 (NOTES 25.11 03:05,
+# 03:18), GB202, GB203 (stride4f_l5090.out, _l5070.out); GA106 flat to 96-112 (03:30: 104); TU102 knee 112-128 (03:10), its
+# flat point not logged: 96 taken (one probe step below the knee), to be read from stride4f_l2080.out.
+ROW_FLAT = {'': 48.0, 'ga106': 104.0, 'tu102': 96.0, '75': 96.0}
+STRIDE4_ROW_BYTES = 2720.0         # the row length of the stride4f probe (rb)
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
 MMQ_FILL = 0.9                     # core/mmq_columns.h launch_of: a tile a CTA where the grid fills its last wave to 90 %
 # generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
@@ -93,6 +98,8 @@ R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
 R8_GROUP = {'W4a8Q45K': 2, 'W4a8Q6K': 4, 'W4a8Q3K': 4, 'W4a8Q2K': 4}
 # generic_w4a8.cuh: the codecs whose blocks carry a min term (kMin: the activation's block sums travel with it) and the
 # codebook codecs' grid words (kGridWords), which r8_kernel stages in shared memory below sm_80.
+# generic_rmma_decoders.h: the register-MMA decoders with a min term (MinTermOf: the adds instance's form).
+RMMA_MIN_TERM = ('GgmlQ45KQuadDecoder<4>', 'GgmlQ45KQuadDecoder<5>', 'GgmlQ2KDecoder', 'Ggml32Decoder<1>', 'Ggml32Decoder<3>')
 R8_SUMS = ('W4a8Q45K<4>', 'W4a8Q45K<5>', 'W4a8Ggml32<1>', 'W4a8Ggml32<3>')
 R8_GRID_WORDS = {'W4a8Iq3Xxs': 256, 'W4a8Iq3S': 512, 'W4a8Iq1S': 2048, 'W4a8Iq1M': 2048, 'W4a8Iq2Xxs': 512,
                  'W4a8Iq2Xs': 1024, 'W4a8Iq2S': 2048}
@@ -120,7 +127,7 @@ def kf_row(kf, fam, **want):
     return cache[key]
 
 
-CARD_FIELDS = ('cc', 'sms', 'boost_mhz', 'boost_min_mhz', 'form', 'bus_bits', 'gbps')
+CARD_FIELDS = ('cc', 'sms', 'boost_mhz', 'boost_min_mhz', 'form', 'bus_bits', 'gbps', 'chip')
 
 
 def card_of(gpu, F):
@@ -145,6 +152,10 @@ def card_of(gpu, F):
                      thr_sm=int(lim['max_threads_per_sm']), blk_sm=int(lim['max_blocks_per_sm']),
                      smem_sm=float(lim['smem_per_sm_kib']) * 1024.0, smem_res=float(lim.get('smem_reserved_per_block', 0)))
             c['arch'] = arch
+            c['chip'] = str(gpu.get('chip', '')).lower()
+            # r26 (RACT): the die's DRAM row activations a ns (probe stride11, 32 B a request; lab table ROW_ACT until
+            # it is a gpu_facts / sm_rate fact); None where the die has no probe run.
+            c['row_act'] = ROW_ACT.get(str(gpu.get('chip', '')).lower())
             c['die'] = dict(nr=c['nr'])                      # the arch's narrow-load facts (analyzer_facts.NARROW)
         cache[key] = c
     return cache[key]
@@ -216,6 +227,44 @@ def cluster_cap(c, C):
     return C * max(1.0, float(math.floor(c['cluster'][C]['slots_sm'] * sms / C + 0.5))) / sms
 
 
+# r28: the share of the bus rate a die sustains under stream loads: the flat level of its stride4f curve, 0.92-0.95 of peak
+# on every die measured (GA102, GA106, AD102, AD106, TU102, GB202, GB203; the srnd probes' bus-bound slope 1.06-1.09 on
+# every family). One probe fact (sm_rate_facts: stream_share), 0.94 until each die's own value is in.
+STREAM_SHARE = 0.94
+
+
+def pipe_on(fam):
+    """RPIPE names the families whose rounds pipeline (r rmma, 8 r8, v vec): r28."""
+    return fam in ''
+
+
+def eta():
+    return float(os.environ.get('RETA', STREAM_SHARE))
+
+
+_ROWS_OPEN = []
+
+
+def rows_open_facts():
+    """The rows-open probe facts a die (src/core/data/rows_open_facts.json, compiled into the engine the same way): {chip: {request, curve, pitch}}."""
+    if not _ROWS_OPEN:
+        import json
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src', 'core', 'data', 'rows_open_facts.json')
+        _ROWS_OPEN.append(json.load(open(p, encoding='utf-8'))['dies'])
+    return _ROWS_OPEN[0]
+
+
+def rows_open_z():
+    """r80: the stride4z / stride4q8 sweeps by row pitch a die ({chip: {'pitches': ...}}), the dies with a sweep only."""
+    return {c: {'pitches': v['pitch']} for c, v in rows_open_facts().items() if 'pitch' in v}
+
+
+def rows_open():
+    """r76: the stride4k curves a die at the probe's 2720-B rows ({chip: {'request', 'geo'}})."""
+    return {c: {'request': v.get('request'), 'geo': v['curve']} for c, v in rows_open_facts().items() if 'curve' in v}
+
+
+
 def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     """ns of one register-MMA launch: rounds of the CTAs the SMs hold (registers), a round = hypot(SM side, DRAM side).
     SM side: K trips x tau + the code outside the loop, plus the wave term (every warp's K step waits one K step's bytes
@@ -262,13 +311,81 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
     own = w_dram + st + w_lat
 
     def rnd(cps, nc, o):                                   # a round of nc CTAs, cps of them on the busiest SM
-        dram = nc * bcta / bus * max(1.0, cps * rows_cta * pitch / c['l1']) ** P['G']
+        slow = max(1.0, cps * rows_cta * pitch / c['l1']) ** P['G']
+        # r27: the same with the last flat point of the curve (the rows an SM keeps open at full rate): 48 rows x
+        # 2720 B = 131 KB on GA102 / AD102 / AD106 / GB202 / GB203, which is the L1 today's law assumes; GA106
+        # and TU102 stay flat about twice as far.
+        flat = ROW_FLAT.get(c.get('chip'), ROW_FLAT.get(c['arch'], ROW_FLAT['']))
+        slow = max(1.0, cps * rows_cta * pitch / (flat * STRIDE4_ROW_BYTES)) ** P['G']
+        rz = (rows_open_z().get(c.get('chip')))
+        if rz is not None:
+            # r80 (stride4p / stride4z: the rows-open rate depends on the row pitch, differently a die - 2304 B has almost no knee on GA102 / AD104, 2720 B is
+            # AD106's worst): the probe read at the call's OWN row pitch (K x bits / 8, the nearest probed pitch), wk = warps_k, sets = the call's row sets, by
+            # rows open an SM; the slower of it and today's law. A die without the sweep falls to RSL=5's read below.
+            rb_ = min(rz['pitches'], key=lambda q_: abs(float(q_) - pitch / sets))
+            if (abs(float(rb_) - pitch / sets) > 0.5):
+                rz = None       # r83: the sweep is read only at a PROBED pitch (q6k's pitches are not 16-B aligned and are not in stride4z): else the 2720-B curve
+        if rz is not None:
+            geo = rz['pitches'][rb_]
+            wk_ = max(w_ for w_ in (1, 2, 4, 8, 16) if w_ <= B)
+            pts = geo.get('%d_%d' % (wk_, int(sets))) or geo.get('%d_1' % wk_)
+            if pts:
+                ro = cps * rows_cta * sets
+                rate = pts[0][1] if ro <= pts[0][0] else pts[-1][1]
+                for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+                    if x0 < ro <= x1:
+                        rate = y0 + (y1 - y0) * (ro - x0) / (x1 - x0)
+                slow = max(slow, 1.0 / max(rate, 0.05))
+        if ((rz is None)) and rows_open().get(c.get('chip'), {}).get('request') == '64 B':
+            # r76: the probe at the schedule's OWN geometry: stride4k is the rmma weight pattern run with WK warps a CTA over 16 rows and SETS row sets; the
+            # points of wk = warps_k and sets = the call's (the nearest probed wk below warps_k), by rows open an SM. RSL=5: the slower of it and today's law.
+            geo = rows_open()[c.get('chip')]['geo']
+            wk_ = max(w_ for w_ in (1, 2, 4, 8, 16) if w_ <= B)
+            pts = geo.get('%d_%d' % (wk_, int(sets))) or geo.get('%d_1' % wk_)
+            if pts:
+                ro = cps * rows_cta * sets
+                rate = pts[0][1] if ro <= pts[0][0] else pts[-1][1]
+                for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+                    if x0 < ro <= x1:
+                        rate = y0 + (y1 - y0) * (ro - x0) / (x1 - x0)
+                slow = (max(slow, 1.0 / rate))
+        dram = nc * bcta / bus * slow
         cm = max(nc / sms, 1.0)                            # the CTAs the launch puts on an SM in this round
         tau = max(own,
                   red * cps * warps * _num(r['int']) / PARTITIONS / clk + (1.0 - red) * own,
                   cps * warps * tot / PARTITIONS / clk,                       # the issue bound: the warps of the busiest SM's CTAs, an instruction a clock a partition
                   cm * warps * (tot + emu) / PARTITIONS / clk if emu else 0.0)  # the issue bound with emulated calls
-        sm = trips * tau + o + nc * bcta / bus / float(B)  # the wave term (round 18, AUDIT r18: 1 + 1 / warps_k)
+        ro = ''
+        oo = o / cps if ro == 'cps' else (o / occ if ro == 'occ' else o)
+        wave = (nc * bcta / bus / float(B))
+        sm = trips * tau + oo + wave                        # the wave term (round 18, AUDIT r18: 1 + 1 / warps_k)
+        if pipe_on('r'):
+            # r28 (probes srnd / srnd2, five dies: t = a + b x rounds, b = the round's bytes at 0.85-0.94 of peak for
+            # every schedule that is not SM-bound; few-CTA calls 0.80-0.85 of their time under hypot): rounds pipeline.
+            # The launch's CTAs start in phase, so once a launch the bytes wait a DRAM latency, the prologue, the last
+            # K trip's work without its DRAM waits and the epilogue (H); after that the bus never idles, or the SMs'
+            # own chains bound the rounds. A round gives (SM side, DRAM side, H).
+            own_nd = own - w_dram
+            tau_nd = max(own_nd, red * cps * warps * _num(r['int']) / PARTITIONS / clk + (1.0 - red) * own_nd,
+                         cps * warps * tot / PARTITIONS / clk, cm * warps * (tot + emu) / PARTITIONS / clk if emu else 0.0)
+            return (sm, dram, c['l0'] + tau_nd + oo)
+        if ((('l' in 'rl') if _num(r['latency']) >= 1 else ('p' in 'rl' or ('1' in 'rl' and occ <= 1.0)) and (c.get('chip') in STREAM_DIE or c['arch'] in STREAM_ARCH))):   # RF4P: the pieces on (r r8 at T 1, l latency, p plain)
+            # r61 (the instance form; ncun4 x 5 dies, the 9B fail cells): the CTAs of a round run in phase, so the round is its bytes at the
+            # die's stream share plus what the kernel's form leaves exposed. PLAIN instance: the loop's static stall clocks and its DRAM
+            # round trips (windows) over the trips, serial. LATENCY instance (the activation ring / staged copy: kernel-facts column
+            # latency): the loop is hidden under the bytes. Both: + the code outside at its STATIC stall clocks (one warp runs the
+            # epilogue). Never below the SM side with the static outside. RF4C=cps: a plain CTA's chain exposed 1 / CTAs an SM.
+            sd = STREAM_DIE.get(c.get('chip'), STREAM_ARCH.get(c['arch']))
+            o4 = oo / c['lat'] if c['lat'] else oo
+            d4 = dram / sd
+            body = d4 + o4
+            if (nfull < 1):
+                # r82 (a call of under one round = ONE wave, every CTA in phase from its first load to its last store): no CTA's loads fly while another
+                # computes, so the wave is its bytes plus the K loop's stall clocks (trips x stall, the windows ride the bytes) plus the outside; the
+                # launch adds one DRAM latency and no multi-round head (below).
+                body = d4 + trips * st + o4
+            floor = (trips * tau + o4)
+            return max(body, floor)
         return math.sqrt(sm * sm + dram * dram)
 
     part = lambda x: max(min(math.ceil(x / sms), occ), 1.0)
@@ -278,6 +395,30 @@ def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, sets=1.0):
         cl = c['cluster'][C]
         out += 2.0 * cl['sync'] + (C - 1) * cl['rank'][int(sets)]
     ln = launch_ns(c, P, ctas)
+    # r93: RF4P letter h: a PLAIN instance of one CTA an SM takes the once-a-launch head only (the same counted drain), its round stays today's plain round
+    if (('l' in 'rl') if _num(r['latency']) >= 1 else ('p' in 'rl' or 'H' in 'rl' or 'c' in 'rl' or (('1' in 'rl' or 'h' in 'rl') and occ <= 1.0))):   # r95: letter H: every plain schedule; r107: letter c: every plain schedule, the common head only
+        # r66 (srndgL, ncuH): once a launch the die's common head (HEAD_T1, rounds-probe intercept), and for a schedule of ONE CTA an SM the chain of
+        # the rounds its CTAs stay in phase (PH_ROUNDS: probe fact a die, (w1x16's head - the common head) / its chain, srndgL T1; GB202 never
+        # leaves phase: a share of the chain every round). Schedules with 2+ CTAs an SM overlap each other's chains: none.
+        hl = '4' in ('1', '2')                        # r67: both facts from ONE run (srndgL): HEAD_L / PH_L
+        chip6 = c.get('chip')
+        sub6 = (nfull < 1)
+        if sub6:
+            ln += c['l0']
+        else:
+            ln += (HEAD_L if hl else HEAD_T1).get(chip6, 0.0)
+        if (occ <= 1.0 and not sub6):   # r107: letter c: no drain on plain
+            rounds6 = max(ctas / slots, 1.0)
+            ph = ((PH_WAVES)).get(chip6)
+            if ph is not None:
+                drain = trips * own
+                # r69 (the CTA-boundary drain, counted): with ONE CTA an SM nothing flies over the CTA boundary, so each in-phase wave idles the bus for a
+                # DRAM round trip (l0) + the epilogue at static clocks + the finish spread, bounded by ONE trip's chain (stall + window): not K-proportional.
+                drain = c['l0'] + out / (c['lat'] if c['lat'] else 1.0) + own
+                ln += drain * (ph[1] * rounds6 if ph[0] is None else min(ph[0], rounds6))
+    if pipe_on('r'):
+        rs = [rnd(part(ctas), tail, out)] if nfull < 1 else [rnd(occ, slots, out)] * int(nfull) + ([rnd(part(tail), tail, out)] if tail > 0 else [])
+        return ln + max(sum(x[0] for x in rs), sum(x[1] for x in rs) / eta() + rs[0][2])
     if nfull < 1:
         return ln + rnd(part(ctas), tail, out)
     return ln + rnd(occ, slots, out) + (nfull - 1.0) * rnd(occ, slots, out) + (rnd(part(tail), tail, out) if tail > 0 else 0.0)
@@ -341,7 +482,7 @@ def mmq_fixup_ns(c, P, l, j):
     return launch_ns(c, P, l['blocks'] * (MMQ_TILE // 32)) + max(bytes_ns, walk_ns)
 
 
-def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0, smem=0.0):
+def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0, smem=0.0, twin=None, tok=None):
     """ns of a ggml_mmq or r8 launch. ggml_mmq: waves of 128-row tiles, a unit = max(its MMA issue, its loop's stall
     clocks) + its bytes at the bus. r8: rounds of resident CTAs, a round = hypot(the warp's chain, the round's bytes /
     bus); the chain is the dp4a loop's stall clocks and a DRAM window for each global-wait generation a trip (#1207: that
@@ -395,10 +536,12 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
     slots = sms * occupancy(c, Wp, _num(r['registers']), smem)
     trips = k / max(_num(r['k_iter']), 1.0)
     gw = _num(r.get('glb_waits'))
-    trip = _num(r['stall_sum']) / clk + gw * window(c, P, _num(r['ldg_bytes']) / max(gw, 1.0))
+    lb = _num(r['ldg_bytes'])
+    trip = _num(r['stall_sum']) / clk + gw * window(c, P, lb / max(gw, 1.0))
     chain = trips * trip + out
-    if T > 1:                                              # an NT-token kernel runs T of its NT token slots (round 24)
-        chain *= T / max(_num(r['nt']), 1.0)
+    nt = max(_num(r['nt']), 1.0)
+    if (T > 1):      # an NT-token kernel runs T of its NT token slots (round 24)
+        chain *= T / nt
     if T <= 1:                                             # the CTA quantizes the activation: its loads are L2 latencies
         chain += k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
     rounds = math.ceil(ctas / slots)
@@ -406,9 +549,26 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
     # A round's memory side: its weights at the bus, or its warps' activation L1 requests (act a warp's trip, a
     # pre-quantized call: ncu shows that call L1-bound, 85 % of the L1/TEX throughput, its L2 traffic below T 1's), one
     # wavefront each on the SMs the round fills, whichever is longer.
-    rnd = lambda nc: math.hypot(chain, max(nc * Wp * R * pitch / bus,
-                                           nc * Wp * trips * act * c['die']['nr']['wf'] / (min(nc, sms) * clk)))
-    return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + (rounds - 1) * rnd(slots) + rnd(last)
+    mem = lambda nc: max(nc * Wp * R * pitch / bus / 1.0, nc * Wp * trips * act * c['die']['nr']['wf'] / (min(nc, sms) * clk))
+    rnd = lambda nc: math.hypot(chain, mem(nc))
+    if (T <= 1 and (c.get('chip') in STREAM_DIE or c['arch'] in STREAM_ARCH)):
+        # r61 (r8 at T 1: rounds probes 0.95-0.99, the 3060 / 2080 9B-Q6 T1 cells): the CTA quantizes its activation into shared memory and
+        # its chain hides under the bytes: a round = max(bytes at the die's stream share, the chain with the code outside at static clocks).
+        sd8 = STREAM_DIE.get(c.get('chip'), STREAM_ARCH.get(c['arch']))
+        o4 = out / c['lat'] if c['lat'] else out
+        ch4 = trips * trip + o4 + k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
+        rnd = lambda nc: max(nc * Wp * R * pitch / bus / sd8, ch4, mem(nc))
+        # r105 (27B T1 cells under RF4P=rl: the four r8 variants tie at the bytes and the tie falls to w8r2, 18 % slower on GB203's vocab call): the bytes
+        # and the static chain combined as the base combines them (two rate limits), so the variants keep the order of their counted chains.
+        rnd = lambda nc: max(math.hypot(nc * Wp * R * pitch / bus / sd8, ch4), mem(nc))
+    if pipe_on('8'):
+        # r28: as rmma: the rounds' memory side at the sustained share, once a launch a DRAM latency, one trip's stall
+        # clocks and the code outside; or the chain every round (SM-bound: srnd r8 at T 4-8 on GA106 / GB20x).
+        h8 = l0 + _num(r['stall_sum']) / clk + out
+        return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + max(rounds * chain, ((rounds - 1) * mem(slots) + mem(last)) / eta() + h8)
+    return (launch_ns(c, P, ctas) + ((0.0)) + (0.0 if T <= 1 else pre)
+            + ((0.0))
+            + (rounds - 1) * rnd(slots) + rnd(last))
 
 
 VEC_WARPS = 4                      # ggml_vec.cu kVecWarps
@@ -489,12 +649,6 @@ VEC_LOADS = {     # ggml_vec.cu Decoder<type>::decode, one row of one 1024-value
     'q51': (1, [(16, 'c', 16, [0]), (4, 'h', 4, [0]), (4, 's', 4, [0])]),
 }
 VEC_ACT = [(4, [4 * l for l in range(32)]), (16, [32 * l for l in range(32)]), (16, [32 * l + 16 for l in range(32)])]   # ds, the two int4 of qs: a token
-# The epilogue a warp runs for a row group, instructions (TASK item 4; read off sm_86's SASS of vec_kernel<Q4_K, 8, 0> in
-# C:/Users/MixaPC/few/sass/ka86.sass with explore/sassfn.py: the reduction 0x1cd0-0x2700, the first store site 0x2710-0x2d20):
-EPI_RED = 10.0      # a value: 5 SHFL + 5 FADD (T != 4, the gated pair)
-EPI_SITE = {'store': 51.0, 'add': 54.0, 'swiglu': 51.0}   # one store site on the path of the launch's kind (prefix 15, kind tests 8,
-                    # one segment-search pass 12, index 11, F2FP + STG 4, BSYNC 1; the residual adds its LDG + PRMT + FADD)
-EPI_GATE = 41.0     # the gate's issue slots of a gated site (0x2880-0x2b00)
 
 
 def load_clocks(nr, lanes):
@@ -565,6 +719,51 @@ def vec_counts(c, P, q, fmt, k, T):
     return tot, stall, o_tot, o_stall, trips, ld, body
 
 
+VEC_KF = 'C:/Users/MixaPC/analyzer_cov/kfvec'                                        # vec extracts with glb_waits (KF_TAIL=1)
+VEC_HAND = 'C:/Users/MixaPC/analyzer_r20/explore/r30_kf/hand_vec_bursts_sm86.txt'    # the stand-in until they land
+_VBURST = {}
+
+
+def vec_bursts(c, q):
+    """r34 (VCH=4/5): the bursts of global loads one trip of the vec row q waits on (sass_counts.global_waits, column
+    glb_waits), or None. From the arch's own vec extract (VEC_KF/sm_<arch>.txt) where it carries the column. STAND-IN
+    until then: the counts of the sm_86 SASS readable in the lab (few/sass/ka86.sass, an older build), for any arch."""
+    arch = c['arch']
+    if arch not in _VBURST:
+        tab = {}
+        for path, kb in ((os.path.join(os.environ.get('VEC_KF', VEC_KF), 'sm_%s.txt' % arch), 'bounded'),
+                         (os.environ.get('VEC_HAND', VEC_HAND), 'bnd')):
+            if tab or not os.path.exists(path):
+                continue
+            cols = None
+            with open(path, encoding='utf-8') as f:
+                for ln in f:
+                    w = ln.split()
+                    if w[:1] in (['columns'], ['family_columns']):
+                        cols = w[1:]
+                    elif cols and w and w[0] == 'vec' and len(w) == len(cols) and 'glb_waits' in cols and 'gated' in cols:
+                        r = dict(zip(cols, w))
+                        tab[(r['type'], r['T'], r['KS'], r['gated'], r.get(kb, r.get('bounded', r.get('bnd'))))] = _num(r['glb_waits'])
+        _VBURST[arch] = tab
+    return _VBURST[arch].get((q['type'], q['T'], q['KS'], q['gated'], q['bounded']))
+
+
+# r50: burst_wait E0 rows (analyzer_cov/bw/bw_<die>_N2act.txt, extra 0, C6): GB/s of pure weight streaming over the peak bus.
+STREAM_DIE = {'ga102': 0.949, 'ga106': 0.947, 'ad106': 0.996, 'ad104': 0.989, 'ad102': 0.977, 'gb203': 0.972, 'gb202': 0.959, 'tu102': 0.945}
+# r57: the once-a-launch head a die, ns: the rounds probes' intercept less the stream launch, rmma w1x16 at 1 CTA an SM, q6k add k 12288, T1
+# (srnd47_<card>, srnd47b_4070; AD102 from its T2 run). Residual by K and T in NOTES (27.11 01:00): k 4096 gated: AD106 4.1, GB203 2-3, GB202 ~0.
+HEAD_T1 = {'ad106': 2310.0, 'ad104': 3730.0, 'ad102': 5810.0, 'gb203': 540.0, 'gb202': 450.0, 'ga106': 4360.0, 'ga102': 4200.0}
+# r67: probe facts a die from srndgL_<card> (q4k swiglu k 4096, n = 16 x SMs x {1..32}, T1): HEAD_L = the intercept of the steady line (R >= 8) less the launch, mean over
+# the schedules of 2 CTAs an SM (w1x8, w1x4, w2x2; TU102: its latency ones, w1x4 and w2x2), ns; PH_L = (w1x16's head - HEAD_L) / its chain (stall + windows + outside):
+# the rounds a lone CTA an SM stays in phase. AD102 has no srndgL run: the Ada mean (BORROWED).
+HEAD_L = {'ga102': 5900.0, 'ga106': 6100.0, 'ad104': 1900.0, 'ad106': 3100.0, 'ad103': 3400.0, 'ad102': 2800.0, 'gb203': 3200.0, 'gb202': 1200.0, 'tu102': 9500.0}
+# r69: the in-phase waves of a lone CTA an SM: (srndgL w1x16 T1 head - HEAD_T1) / the counted drain a wave (l0 + static outside + one trip's stall and window):
+# a probe fact a die. AD103 takes AD104's common head, AD102 the Ada mean (BORROWED); TU102 has no HEAD_T1 (its whole head); GB202: the share of a drain every round.
+PH_WAVES = {'ga102': (2.3, None), 'ga106': (1.9, None), 'ad104': (2.9, None), 'ad106': (3.6, None), 'ad103': (3.7, None), 'ad102': (3.4, None), 'gb203': (0.9, None),
+            'gb202': (None, 0.39), 'tu102': (5.2, None)}
+STREAM_ARCH = {'89': 0.987, '86': 0.949, '80': 0.947, '120a': 0.966, '75': 0.945}   # a die without a run takes its arch's mean (AD103: borrowed)
+
+
 def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
     """ggml_vec from its launch: two nodes (the q8_1 quantizer and the product) and the quantizer's DRAM latency, then
     the rounds of the persistent grid, the last with its own CTAs. A warp takes a row pair over the whole K; a round =
@@ -597,6 +796,21 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
         d = nc * bg / bus
         cps = math.ceil(nc / c['sms'])
         sm = sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, k / 1024.0, bw, ld, 1.0)
+        vch = ''
+        vch = '' if vch in ('6', '7', '8', '9', '10', '11', '12') else vch  # 6-12 price the whole launch (below); its fallback is today's round
+        if vch:
+            # r33 (ncuvg GA102: CPI flat 19-20 from T 4 to T 6, 76 % of it long-scoreboard; the L1TEX wait clocks a trip
+            # over the trip's counted waits on a global load = ~500 clocks = one DRAM latency): the warp's chain pays
+            # the unloaded DRAM stream latency (dram_stream_latency_ns, the l0 rmma's window starts from) at every wait
+            # ptxas left on a global load (the row's sb_waits_global), not one window a 1024-value slice.
+            chain = (trips * stall + o_stall) / c['clk'] + trips * _num(q.get('sb_waits_global')) * l0
+            if vch in ('4', '5'):
+                # r34 (ncu per-site stalls, GA102 / AD104): a trip has one DRAM-latency wait, the first consumer of the
+                # weight burst; each later burst (the per-token q8_1 activation loads) waits an L2 latency. Bursts =
+                # the generations of global loads the trip waits on (glb_waits).
+                nb = vec_bursts(c, q)
+                chain = sm if nb is None else (trips * stall + o_stall) / c['clk'] + trips * (l0 + max(nb - 1.0, 0.0) * c['l2lat_ns'])
+            sm = max(sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, 0.0, bw, ld, 1.0), chain)
         # The SM's L2 link (l2_bytes_per_sm_clock) carries every resident warp's trip bytes and, where the rows its
         # CTAs keep open and the activation exceed L1, the re-reads: the share of them past the bytes the SM keeps in
         # flight at a linear rate (ring_free) queues there.
@@ -604,6 +818,10 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
         reread = excess * load_bytes if opn + act > c['l1'] else 0.0
         reread *= max(0.0, 1.0 - c['ring_free'] / (cps * VEC_WARPS * bw))
         sm = max(sm, cps * VEC_WARPS * trips * (bw * (k / 1024.0) / trips + reread) / (c['l2bpc'] * c['clk']))
+        if vch in ('2', '4'):
+            return max(sm, d)
+        if vch == '3':                                  # the bus at its sustained share
+            return max(sm, d / eta())
         return math.hypot(sm, d) if form == 'h' else sm + d if form == 's' else max(sm, d)
 
     return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + l0 + (rounds - 1) * rnd(ctas) + rnd(last)
@@ -613,7 +831,7 @@ VEC_MMA_TYPES = ('q4k', 'q5k', 'q6k')   # ggml_vec.cu vec_mma_supported (feat/11
 
 
 def vecmma_row(c, fmt, ep):
-    rows = c['kf'].get('vecmma') or []      # facts.py: the architecture's own section, or sm_90's as a named stand-in
+    rows = (c['kf'].get('vecmma'))      # facts.py: the architecture's own section, or sm_90's as a named stand-in
     t, g = MMQ_TYPE.get(fmt), str(int(ep == 'swiglu'))
     return next((r for r in rows if r['type'] == t and r['gated'] == g and _num(r['mma']) > 0), None)
 
@@ -645,7 +863,8 @@ def price_vec_mma(c, P, fmt, ep, n, k, T, bits, sets):
                      min(math.ceil(nc / c['sms']), occ), trips, bw, trips * (_num(r['ldg']) + _num(r.get('lds'))) * c['l1cyc'])
         return math.hypot(sm, d) if form == 'h' else sm + d
 
-    return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + c['l0'] + (rounds - 1) * rnd(slots) + rnd(last)
+    return (launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + c['l0'] + (rounds - 1) * rnd(slots) + rnd(last)
+            + 0.0)
 
 
 def mmq_j(T):
@@ -762,8 +981,13 @@ def _price(gpu, F, shape, route, P):
         M, N, A, B, C = (int(x or 1) for x in m.groups())
         if C > 1 and (c['cc'] < 90 or C not in c.get('cluster', {})):   # clusters are sm_90+, priced from their facts
             return None
-        key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=0)
+        # RSUMS (lab, #1243): launch_rmma_schedule takes the adds instance (RmmaSums 1) of a min-term decoder at four
+        # token tiles or more where the MMA is native BF16 (rmma_add_sums: sm_80+, decode profile).
+        adds = (N >= 4 and c['cc'] >= 80 and RMMA_DEC.get(fmt) in RMMA_MIN_TERM)
+        key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=1 if adds else 0)
         r = kf_row(kf, 'rmma', latency=0, **key)
+        if r is None and adds:
+            r = kf_row(kf, 'rmma', latency=0, **dict(key, sums=0))
         if r is not None and N == 1 and latency_launched(c, ep, A, B, M, n, r, kf_row(kf, 'rmma', latency=1, **key), C):
             r = kf_row(kf, 'rmma', latency=1, **key)                       # the latency instance is the one launched
         return None if r is None else price_rmma(c, P, r, n, k, T, sets * k * bits / 8.0, M, N, A, B, C, sets=sets)
@@ -790,6 +1014,12 @@ def _price(gpu, F, shape, route, P):
             a0 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt2, epilogue=EPI.get(ep, '0'), pre=0)
             if a1 is not None and a0 is not None:
                 twin = (a1, a0, nt / float(nt2))
+                break
+        tok = None                                              # r26: the pre-quantized instance with other token slots
+        for nt2 in ((nt // 2, nt * 2) if T > 1 else ()):
+            t2 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt2, epilogue=EPI.get(ep, '0'), pre=1) if nt2 in (2, 4, 8) else None
+            if t2 is not None:
+                tok = (t2, float(nt2))
                 break
         if r is not None and twin is not None:
             a1, a0, scale = twin
@@ -822,12 +1052,14 @@ def _price(gpu, F, shape, route, P):
             return None
         if inst == 'ks' and vec_ks(ep, k, inst) == 0:            # .ks names the unrolled instance: none at this K
             return None
-        return price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst)
+        pv = price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst)
+        return pv
     else:
         return None
     if r is None:
         return None
-    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0, smem if fam == 'r8' else 0.0)
+    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0, smem if fam == 'r8' else 0.0,
+                       twin if fam == 'r8' else None, tok if fam == 'r8' else None)
 
 
 def candidates(gpu, F, shape):
