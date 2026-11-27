@@ -463,7 +463,7 @@ def mmq_fixup_ns(c, P, l, j):
     return launch_ns(c, P, l['blocks'] * (MMQ_TILE // 32)) + max(bytes_ns, walk_ns)
 
 
-def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0, smem=0.0, twin=None, tok=None):
+def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.0, smem=0.0):
     """ns of a ggml_mmq or r8 launch. ggml_mmq: waves of 128-row tiles, a unit = max(its MMA issue, its loop's stall
     clocks) + its bytes at the bus. r8: rounds of resident CTAs, a round = hypot(the warp's chain, the round's bytes /
     bus); the chain is the dp4a loop's stall clocks and a DRAM window for each global-wait generation a trip (#1207: that
@@ -925,12 +925,6 @@ def _price(gpu, F, shape, route, P):
             if a1 is not None and a0 is not None:
                 twin = (a1, a0, nt / float(nt2))
                 break
-        tok = None                                              # r26: the pre-quantized instance with other token slots
-        for nt2 in ((nt // 2, nt * 2) if T > 1 else ()):
-            t2 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt2, epilogue=EPI.get(ep, '0'), pre=1) if nt2 in (2, 4, 8) else None
-            if t2 is not None:
-                tok = (t2, float(nt2))
-                break
         if r is not None and twin is not None:
             a1, a0, scale = twin
             n_add = max(_num(a1['ldg']) - _num(a0['ldg']), 0.0) * scale
@@ -967,8 +961,7 @@ def _price(gpu, F, shape, route, P):
         return None
     if r is None:
         return None
-    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0, smem if fam == 'r8' else 0.0,
-                       twin if fam == 'r8' else None, tok if fam == 'r8' else None)
+    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R, ep, act if fam == 'r8' else 0.0, smem if fam == 'r8' else 0.0)
 
 
 def candidates(gpu, F, shape):

@@ -13,6 +13,12 @@ ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/sm_rate_facts.json NINFERNO
   NINFERNO_SM_RATE_FACTS_JSON)
 configure_file(embedded_sm_rate_facts.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_sm_rate_facts.h @ONLY)
+# The probe facts a die the decode price reads (die_round_facts.cpp; tools/route_pick/analyzer.py
+# reads the same file).
+ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/die_round_facts.json NINFERNO_DIEROUND
+  NINFERNO_DIE_ROUND_FACTS_JSON)
+configure_file(embedded_die_round_facts.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_die_round_facts.h @ONLY)
 # The same table as constexpr rows (core/board_registry.h), for the data that is keyed by a board
 # at compile time (core/measured_boards.h). The directory is public: the header reaches every
 # target that includes it.
@@ -34,6 +40,7 @@ add_library(ninferno_core_host STATIC
   machine_facts.cpp
   isa_facts.cpp
   sm_rate_facts.cpp
+  die_round_facts.cpp
   gate_atlas.cpp
   layout.cpp
   weight_view.cpp
