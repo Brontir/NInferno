@@ -38,6 +38,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace {
 
@@ -444,6 +446,8 @@ struct KnownCase {
     // When given: the evidence's kind ("measured"), or the answer it demoted under the route
     // policy ("demoted=route-table:borrowed"), checked besides the source.
     std::string_view evidence = {};
+    // When given: the route the walk took (route_name), checked besides the source and evidence.
+    std::string_view route = {};
 };
 
 std::string known_source(const KnownCase& c) {
@@ -473,8 +477,8 @@ std::string known_source(const KnownCase& c) {
     if (c.profile == 3) ops::set_route_pins({PrefillRoute::Auto, DecodeRoute::A16, MoePath::Auto});
     if (c.profile == 4) ops::set_route_pins({PrefillRoute::A16, DecodeRoute::Auto, MoePath::Auto});
     try {
-        const generic::Evidence e =
-            generic::select_answer(problem, w, c.tokens, c.prefill).evidence;
+        const generic::RouteAnswer answer = generic::select_answer(problem, w, c.tokens, c.prefill);
+        const generic::Evidence& e        = answer.evidence;
         g_reached_sources.insert(std::string(e.source));
         g_reached_kinds.insert(generic::evidence_kind_name(e.kind));
         // The same call, every authority asked on its own (the pin, the probe and the profile are
@@ -490,6 +494,7 @@ std::string known_source(const KnownCase& c) {
         } else if (!c.evidence.empty()) {
             got += std::string(" ") + generic::evidence_kind_name(e.kind);
         }
+        if (!c.route.empty()) got += " route=" + generic::route_name(answer.route);
         return got;
     } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
@@ -517,9 +522,18 @@ void check_known() {
         // calls keep the table and the rules
         {"rtx4090", q4k, own, a16, 1, false, 0, "route-table", "measured"},
         {"rtx4090", q4k, big, a16, 1, false, 0, "rmma-rule", "demoted=route-table:borrowed"},
-        // a decode call of a class routes/pick ranks: the analyzer's list, ahead of the table and
-        // the rules (analyzer_entry)
-        {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted"},
+        // a decode call on a board the analyzer prices: its ranked routes (route_analyzer.h
+        // device_routes), ahead of the table and the rules (analyzer_entry). The list leads with
+        // A8 routes at T 1 and T 4: A16Only admits none of them, so the walk takes the list's
+        // register MMA; AllowA8 takes its head. At T 4 vec leads rmma.m1.n1.w1x8 by ~1.3 % of the
+        // price (8116 vs 8224 ns, analyzer.py on the RTX 5090 row): a change to either route's
+        // facts or price may swap them, which this case then reports.
+        {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
+        {"rtx5090", q4k, big, a16, 4, false, 0, "analyzer", "predicted", "rmma.m1.n1.w1x8"},
+        {"rtx5090", q4k, big, LinearPolicy::AllowA8, 1, false, 0, "analyzer", "predicted",
+            "r8.w4r1"},
+        {"rtx5090", q4k, big, LinearPolicy::AllowA8, 4, false, 0, "analyzer", "predicted",
+            "ggml_vec"},
         {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},
@@ -529,14 +543,84 @@ void check_known() {
     };
     for (const KnownCase& c : cases) {
         const std::string got  = known_source(c);
-        const std::string want = c.evidence.empty()
+        std::string want       = c.evidence.empty()
                                      ? std::string(c.source)
                                      : std::string(c.source) + " " + std::string(c.evidence);
+        if (!c.route.empty()) want += " route=" + std::string(c.route);
         if (got != want) {
             fail(std::string(c.board) + " " + generic::qtype_name(c.qtype) + " " +
                  std::to_string(c.shape.n) + "x" + std::to_string(c.shape.k) +
                  " T=" + std::to_string(c.tokens) + " profile " + std::to_string(c.profile) +
                  ": answered by '" + got + "', expected '" + want + "'");
+        }
+    }
+}
+
+// The analyzer walk (analyzer_walk, #1214): a list of r8.w4r1, ggml_vec, rmma.m1.n1.w1x8 for a Q4_K
+// decode call under AllowA8 on the RTX 5090. At K 4096 the call's activation fits R8's CTA and the
+// list's head answers; at K 49152 it does not (r8_call_refusal DecodeFit), so the walk passes R8
+// over and the list's next route answers, not R8 demoted by the resolver.
+void check_analyzer_walk() {
+    const generic::FactsBoard* board = nullptr;
+    for (const generic::FactsBoard& b : generic::kFactsBoards) {
+        if (b.name == "rtx5090") board = &b;
+    }
+    if (board == nullptr) {
+        fail("analyzer walk: no board rtx5090");
+        return;
+    }
+    const ScopedDeviceClass scoped(generic::board_device_class(*board));
+    std::vector<generic::Route> ranked;
+    for (const char* name : {"r8.w4r1", "ggml_vec", "rmma.m1.n1.w1x8"}) {
+        const auto r = generic::parse_route(name);
+        if (!r) {
+            fail(std::string("analyzer walk: no route ") + name);
+            return;
+        }
+        ranked.push_back(*r);
+    }
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    for (const auto& [k, fits, want] :
+         {std::tuple{4096, true, "r8.w4r1"}, std::tuple{49152, false, "ggml_vec"}}) {
+        const quantized_weight::PackedWeight host = quantized_weight::make_patterned_weight(
+            QType::GGML_Q4_K, 4096, k, 7U, quantized_weight::PatternedWeightOptions{});
+        const Weight w = host.device_weight(payload);
+        const generic::Problem problem{QType::GGML_Q4_K, LinearPolicy::AllowA8, 4096, k,
+                                       generic::Epilogue::Store};
+        const std::string where = "analyzer walk, Q4_K 4096x" + std::to_string(k) + " T=1";
+        const bool fit =
+            generic::r8_call_refusal(problem, w, 1) != generic::R8CallRefusal::DecodeFit;
+        if (fit != fits) {
+            fail(where + ": R8's decode fit is " + (fit ? "true" : "false") +
+                 ", the case needs the other");
+            continue;
+        }
+        const auto got = generic::analyzer_walk(ranked, generic::resolve_ask(1, false), problem, w);
+        if (!got || generic::route_name(*got) != want) {
+            fail(where + ": the walk took " + (got ? generic::route_name(*got) : "none") +
+                 ", expected " + want);
+        }
+    }
+    // A list none of whose routes is admitted (the A8 routes under A16Only) gives no answer, so
+    // the authorities below answer; a prefill call never reaches the walk (analyzer_entry).
+    {
+        const quantized_weight::PackedWeight host = quantized_weight::make_patterned_weight(
+            QType::GGML_Q4_K, 4096, 4096, 7U, quantized_weight::PatternedWeightOptions{});
+        const Weight w = host.device_weight(payload);
+        const generic::Problem a16{QType::GGML_Q4_K, LinearPolicy::A16Only, 4096, 4096,
+                                   generic::Epilogue::Store};
+        const std::vector<generic::Route> a8_only(ranked.begin(), ranked.begin() + 2);
+        if (const auto got =
+                generic::analyzer_walk(a8_only, generic::resolve_ask(1, false), a16, w)) {
+            fail("analyzer walk: an A16Only call took " + generic::route_name(*got) +
+                 " off a list of A8 routes");
+        }
+        const generic::Problem a8{QType::GGML_Q4_K, LinearPolicy::AllowA8, 4096, 4096,
+                                  generic::Epilogue::Store};
+        for (const generic::NamedAuthority& a : generic::select_authorities()) {
+            if (a.name == "analyzer" && a.answer(generic::resolve_ask(4, true), a8, w)) {
+                fail("analyzer walk: a prefill call of T 4 is answered by the analyzer");
+            }
         }
     }
 }
@@ -828,6 +912,7 @@ int main() {
         check_words();
         check_selected_header();
         check_known();
+        check_analyzer_walk();
         check_incomplete_gate();
         check_tuned_over_prediction();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);

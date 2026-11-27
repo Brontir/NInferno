@@ -648,32 +648,39 @@ void check_evidence_paths() {
         {"rtx3090ti", 0x2203, ninferno::QType::GGML_IQ4_NL, 4096, 5120, g::Evidence::Kind::Carried,
          "r8-table"},
     };
-    // Under evidence the analyzer's ranked list (routes/pick, a board's own or a carried one)
-    // answers T = 1 ahead of the R8 table and law (route_authorities.cpp analyzer_entry); legacy
-    // reads no list, so the R8 paths are asked there.
-    const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
-    for (const Path& path : paths) {
-        const ninferno::DeviceClass d =
-            g::board_device_class(g::registry_facts_board(path.name, path.pci));
-        const auto a = g::route_answer_query(d, path.q, ninferno::ops::LinearPolicy::AllowA8,
-                                             g::Epilogue::Store, path.n, path.k, 1);
-        const std::string at = std::string(path.name) + " " + std::to_string(path.n) + "x" +
-                               std::to_string(path.k) + ": ";
-        expect(a && a->route.family == g::Family::R8Mma && a->evidence.kind == path.kind &&
-                   a->evidence.source == path.source,
-               at + "evidence " + (a ? g::evidence_text(a->evidence) : std::string("none")));
-        if (!a) continue;
-        const bool carried = path.kind == g::Evidence::Kind::Carried;
-        expect(carried == !a->evidence.donor.empty(),
-               at + "a donor exactly on the carried path: " + g::evidence_text(a->evidence));
-        const ninferno::ScopedDeviceClass scoped(d);
-        const g::Problem p{path.q, ninferno::ops::LinearPolicy::AllowA8, path.n, path.k,
-                           g::Epilogue::Store};
-        expect(g::heuristic_r8(p, 1) == a->route.schedule,
-               at + "heuristic_r8 takes " + schedule_name(g::heuristic_r8(p, 1)) + ", the route " +
-                   schedule_name(a->route.schedule));
-        // The carried entry stands against the law only where the law could not price it.
-        if (carried) expect(!g::law_r8(p), at + "the law answered off its generations");
+    // Under evidence the analyzer (route_analyzer::device_routes, priced on the board's facts at
+    // the call) answers T = 1 ahead of the R8 table and law (route_authorities.cpp analyzer_entry);
+    // legacy asks no analyzer, so every R8 path is asked there. AD102 is held out of the analyzer
+    // (route_analyzer.h kHeldChips, #1211), so its two paths (the 4090's table, the 4090 D's law)
+    // are asked under evidence as well. The 3090 Ti's carried path is asked under legacy only:
+    // under evidence the analyzer answers that call (GA102, r8.w4r2 first).
+    for (const bool evidence : {false, true}) {
+        const ninferno::ops::ScopedRoutePolicy policy(evidence ? ninferno::RoutePolicy::Evidence
+                                                               : ninferno::RoutePolicy::Legacy);
+        for (const Path& path : paths) {
+            if (evidence && path.kind == g::Evidence::Kind::Carried) continue;
+            const ninferno::DeviceClass d =
+                g::board_device_class(g::registry_facts_board(path.name, path.pci));
+            const auto a = g::route_answer_query(d, path.q, ninferno::ops::LinearPolicy::AllowA8,
+                                                 g::Epilogue::Store, path.n, path.k, 1);
+            const std::string at = std::string(path.name) + " " + std::to_string(path.n) + "x" +
+                                   std::to_string(path.k) + (evidence ? " (evidence): " : ": ");
+            expect(a && a->route.family == g::Family::R8Mma && a->evidence.kind == path.kind &&
+                       a->evidence.source == path.source,
+                   at + "evidence " + (a ? g::evidence_text(a->evidence) : std::string("none")));
+            if (!a) continue;
+            const bool carried = path.kind == g::Evidence::Kind::Carried;
+            expect(carried == !a->evidence.donor.empty(),
+                   at + "a donor exactly on the carried path: " + g::evidence_text(a->evidence));
+            const ninferno::ScopedDeviceClass scoped(d);
+            const g::Problem p{path.q, ninferno::ops::LinearPolicy::AllowA8, path.n, path.k,
+                               g::Epilogue::Store};
+            expect(g::heuristic_r8(p, 1) == a->route.schedule,
+                   at + "heuristic_r8 takes " + schedule_name(g::heuristic_r8(p, 1)) +
+                       ", the route " + schedule_name(a->route.schedule));
+            // The carried entry stands against the law only where the law could not price it.
+            if (carried) expect(!g::law_r8(p), at + "the law answered off its generations");
+        }
     }
 }
 

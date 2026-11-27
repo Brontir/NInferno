@@ -114,6 +114,13 @@ def _num(v, d=0.0):
         return d
 
 
+def rmma_adds_launched(c, fmt, N):
+    """Whether the launch takes the adds instance (RmmaSums 1, the kernel-facts row sums=1) of the register-MMA kernel:
+    launch_rmma_schedule runs it for a min-term decoder at four token tiles or more where the call asks for the adds
+    (rmma_add_sums: native BF16 MMA, sm_80 on, outside the invariant and prefill profiles) (#1243)."""
+    return N >= 4 and c['cc'] >= 80 and RMMA_DEC.get(fmt) in RMMA_MIN_TERM
+
+
 def kf_row(kf, fam, **want):
     """The first kernel-facts row of `fam` whose key fields equal `want`, or None (cached in the arch's facts)."""
     cache = kf.setdefault('_rows', {})
@@ -886,9 +893,7 @@ def _price(gpu, F, shape, route, P):
         M, N, A, B, C = (int(x or 1) for x in m.groups())
         if C > 1 and (c['cc'] < 90 or C not in c.get('cluster', {})):   # clusters are sm_90+, priced from their facts
             return None
-        # RSUMS (lab, #1243): launch_rmma_schedule takes the adds instance (RmmaSums 1) of a min-term decoder at four
-        # token tiles or more where the MMA is native BF16 (rmma_add_sums: sm_80+, decode profile).
-        adds = (N >= 4 and c['cc'] >= 80 and RMMA_DEC.get(fmt) in RMMA_MIN_TERM)
+        adds = rmma_adds_launched(c, fmt, N)
         key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=1 if adds else 0)
         r = kf_row(kf, 'rmma', latency=0, **key)
         if r is None and adds:
