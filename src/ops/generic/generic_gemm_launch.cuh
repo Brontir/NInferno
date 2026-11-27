@@ -235,8 +235,9 @@ bool rmma_wide_pays(const GemmArgs& args) {
 // fails this launch takes the plain kernel (master's), and the next one asks again.
 template <class Decoder, class Schedule, Epilogue E, RmmaSums Sums = RmmaSums::OnesMma>
 bool rmma_latency_launch(const GemmArgs& args) {
-    // LAB ONLY (lab/force-rmma-variant, r92 controls): NINFERNO_LAB_RMMA_VARIANT=plain | latency forces the
-    // instance of every latency-variant schedule, whatever the board and occupancy facts say.
+    // LAB ONLY (lab/force-rmma-variant, r92 controls): NINFERNO_LAB_RMMA_VARIANT=plain | latency
+    // forces the instance of every latency-variant schedule, whatever the board and occupancy facts
+    // say.
     static const char* force = std::getenv("NINFERNO_LAB_RMMA_VARIANT");
     if (force != nullptr && force[0] == 'p') return false;
     if (force != nullptr && force[0] == 'l') return true;
