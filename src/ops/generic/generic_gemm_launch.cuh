@@ -3,6 +3,8 @@
 // Compiled schedule lists and their launchers. Each format's translation unit instantiates
 // launch_rmma<Decoder> once (generic_gemm_<format>.cu), so the whole list is compiled per format.
 
+#include <cstdlib>
+
 #include "core/device.h"
 #include "core/device_class.h"
 #include "core/kernel_occupancy.h"
@@ -233,6 +235,11 @@ bool rmma_wide_pays(const GemmArgs& args) {
 // fails this launch takes the plain kernel (master's), and the next one asks again.
 template <class Decoder, class Schedule, Epilogue E, RmmaSums Sums = RmmaSums::OnesMma>
 bool rmma_latency_launch(const GemmArgs& args) {
+    // LAB ONLY (lab/force-rmma-variant, r92 controls): NINFERNO_LAB_RMMA_VARIANT=plain | latency forces the
+    // instance of every latency-variant schedule, whatever the board and occupancy facts say.
+    static const char* force = std::getenv("NINFERNO_LAB_RMMA_VARIANT");
+    if (force != nullptr && force[0] == 'p') return false;
+    if (force != nullptr && force[0] == 'l') return true;
     try {
         return rmma_latency_pays<Decoder, Schedule, E, Sums>(args);
     } catch (const std::exception&) {}
