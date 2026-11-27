@@ -273,6 +273,7 @@ std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns) 
     c.hmma     = *isa->mma_cycles_per_partition;
     c.lat      = *isa->lat_imad;
     c.fill     = *rate->warp_fill_bytes_per_clock;
+    c.ring_free = rate->ring2_linear_to_w_free * rate->ring2_b_w_w1_free;
     c.l1lat    = *isa->l1_latency.w1;
     c.l2lat_ns = *isa->l2_latency_ns.w1;
     c.int_cyc  = *isa->int32_cycles_per_warp_instruction;
@@ -364,7 +365,7 @@ bool latency_launched(const Card& c, Epilogue ep, int A, int B, int M, double n,
 
 double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool latency_row,
                   double n, double k, double T, double pitch, int M, int N, int A, int B, int C,
-                  bool issue, double sets) {
+                  double sets) {
     const double sms = c.sms, clk = c.clk, bus = c.bus;
     const double passes   = std::ceil(T / (8.0 * N));
     const double rows_cta = 16.0 * M * A, warps = A * B;
@@ -394,7 +395,10 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     const double steps = 2.0 - (A * B <= 8 && latency_row ? 1.0 : 0.0);
     const double bw    = loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes) +
                       loop_z(r, &LoopCounts::ldgsts_bytes);
-    const double w_dram     = steps * window(c, bw / steps);
+    // A codebook format's lookups in shared memory (the loop's LDS) each expose the shared
+    // latency on the chain, as ggml_mmq's chain charges its shared waits (round 24, #1236).
+    const double w_dram =
+        steps * window(c, bw / steps) + loop_i(r, &LoopCounts::lds) * c.smem_lat / clk;
     const double st         = sched(r, &StaticSchedule::stall_sum) / clk;
     const double tot        = loop_i(r, &LoopCounts::total);
     const std::string shape = mma_shape(r);
@@ -412,7 +416,9 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
         const double cm = std::max(nc / sms, 1.0);
         const double tau =
             std::max({own, red * cps * warps * iint / kPartitions / clk + (1.0 - red) * own,
-                      issue ? cps * warps * tot / kPartitions / clk : 0.0,
+                      // the issue bound: the warps of the busiest SM's CTAs, an instruction a
+                      // clock a partition
+                      cps * warps * tot / kPartitions / clk,
                       emu > 0 ? cm * warps * (tot + emu) / kPartitions / clk : 0.0});
         const double sm = trips * tau + o + nc * bcta / bus / static_cast<double>(B);
         return std::sqrt(sm * sm + dram * dram);
@@ -477,7 +483,8 @@ double price_mmq(const Card& c, const Settings& s, const KernelFacts& r, double 
 }
 
 double price_r8(const Card& c, const Settings& s, const KernelFacts& r, double n, double k,
-                double T, double bits, double sets, int Wp, int R, double act, double smem) {
+                double T, double bits, double sets, int Wp, int R, int nt, double act,
+                double smem) {
     const double sms = c.sms, clk = c.clk, bus = c.bus, pitch = sets * k * bits / 8.0;
     const auto quant = [&](double ctas, double out_per_value) {
         return launch_ns(c, s, ctas) + c.l0 + second_kernel(c, s) +
@@ -492,6 +499,7 @@ double price_r8(const Card& c, const Settings& s, const KernelFacts& r, double n
     const double trip  = sched(r, &StaticSchedule::stall_sum) / clk +
                         gw * window(c, loop_z(r, &LoopCounts::ldg_bytes) / std::max(gw, 1.0));
     double chain = trips * trip + out;
+    if (T > 1) chain *= T / std::max(nt, 1); // an NT-token kernel runs T of its NT slots (round 24)
     if (T <= 1) {
         chain += k / 1024.0 / Wp *
                  (pro(r, &PrologueCounts::stall_sum) / clk +
@@ -812,11 +820,33 @@ std::optional<double> price_vec(const Card& c, const Settings& s, QType q, Epilo
              trips * loop_i(r, &LoopCounts::lds) * c.nr_cap;
     }
     const double bw = bg / kVecWarps / (k / 1024.0);
-    const auto rnd  = [&](double nc) {
+    // The trip's waits on global loads beyond those its loads in flight cover (the slices it
+    // spans x ldg_peak): each re-reads a load's bytes (round 25, #1236; the T 6 / 7 gated
+    // instances wait 22-23 times a trip with 12-13 loads in flight, T 8 13 times with 16).
+    const double peak = std::max(pipe(r, &PipeCounts::ldg_peak), 1.0);
+    const double excess =
+        std::max(0.0, pipe(r, &PipeCounts::sb_waits_global) - peak * slices / trips);
+    const double n_ld = loop_i(r, &LoopCounts::ldg) + loop_i(r, &LoopCounts::ld);
+    const double load_bytes =
+        (loop_z(r, &LoopCounts::ldg_bytes) + loop_z(r, &LoopCounts::ld_bytes)) /
+        std::max(n_ld, 1.0);
+    const double act = static_cast<double>(T) * k * 36.0 / 32.0; // the q8_1 activation
+    const double rb  = k * bits / 8.0; // a row's bytes in 128-B L1 lines, one more where unaligned
+    const double row_lines =
+        (std::ceil(rb / 128.0) + (std::fmod(rb, 128.0) != 0.0 ? 1.0 : 0.0)) * 128.0;
+    const auto rnd = [&](double nc) {
         const double d   = nc * bg / c.bus;
         const double cps = std::ceil(nc / c.sms);
-        const double sm  = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot,
-                                    o_stall, trips, cps, k / 1024.0, bw, ld);
+        double sm = sm_side(c, s.vec_outside, s.vec_issue, s.vec_load, tot, stall, o_tot, o_stall,
+                            trips, cps, k / 1024.0, bw, ld, kVecWarps);
+        // The SM's L2 link carries every resident warp's trip bytes and, where the rows its CTAs
+        // keep open and the activation exceed L1, the re-reads: the share of them past the bytes
+        // the SM keeps in flight at a linear rate (ring_free) queues there.
+        const double opn = cps * bg / rb * row_lines;
+        double reread    = opn + act > c.l1 ? excess * load_bytes : 0.0;
+        reread *= std::max(0.0, 1.0 - c.ring_free / (cps * kVecWarps * bw));
+        sm = std::max(sm,
+                      cps * kVecWarps * trips * (bw * slices / trips + reread) / (c.l2bpc * c.clk));
         return combine(s.vec_form, sm, d);
     };
     return launch_ns(c, s, L->ctas) + launch_ns(c, s, std::ceil(k / 256.0) * T) +
@@ -1003,7 +1033,7 @@ std::optional<std::pair<int, int>> parse_r8(std::string_view r) {
 }
 
 std::optional<double> price(const Card& c, const Call& call, std::string_view route,
-                            const Settings& s, bool issue = false) {
+                            const Settings& s) {
     const FormatRow* fr = format_row(call.qtype);
     if (fr == nullptr) return std::nullopt;
     const double n = call.n, k = call.k, T = std::max<double>(call.tokens, 1.0);
@@ -1035,7 +1065,7 @@ std::optional<double> price(const Card& c, const Call& call, std::string_view ro
             }
         }
         return price_rmma(c, s, *r, lat_row, n, k, T, sets * k * bits / 8.0, m->M, m->N, m->A, m->B,
-                          m->C, issue, sets);
+                          m->C, sets);
     }
     if (const auto m = parse_r8(route)) {
         const auto [Wp, R] = *m;
@@ -1092,7 +1122,7 @@ std::optional<double> price(const Card& c, const Call& call, std::string_view ro
         }
         if (T <= 1 && smem > kR8StaticSmem) return std::nullopt;
         if (!r) return std::nullopt;
-        return price_r8(c, s, *r, n, k, T, bits, sets, Wp, R, act, smem);
+        return price_r8(c, s, *r, n, k, T, bits, sets, Wp, R, nt, act, smem);
     }
     if (route == "ggml_mmq") {
         const FormatFacts& ff = format_facts(call.qtype);
@@ -1146,17 +1176,6 @@ std::optional<Card> card_of(const DeviceClass& device) {
 
 std::optional<double> price_ns(const Card& card, const Call& call, std::string_view route,
                                const Settings& s) {
-    // The pair (round 11): q8 n4.w1x8 = the price of n2.w1x4 x the ratio of the two with the
-    // issue bound.
-    if (route == "rmma.m1.n4.w1x8" && call.qtype == QType::Q8_G32_FP16) {
-        const auto a  = price(card, call, "rmma.m1.n2.w1x4", s, false);
-        const auto b  = price(card, call, route, s, true);
-        const auto ai = price(card, call, "rmma.m1.n2.w1x4", s, true);
-        if (a && b && ai && *ai > 0) {
-            const double t = *a * *b / *ai;
-            return std::isfinite(t) && t > 0 ? std::optional<double>(t) : std::nullopt;
-        }
-    }
     const auto t = price(card, call, route, s);
     // A price the facts cannot give (a zero count in a row) is no price, never inf or NaN.
     return t && std::isfinite(*t) && *t > 0 ? t : std::nullopt;
