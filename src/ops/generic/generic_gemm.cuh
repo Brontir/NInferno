@@ -3683,11 +3683,15 @@ __launch_bounds__(Schedule::kThreads,
     // LAB ONLY (lab/rmma-stagger, r97): de-phase the K-warps of the latency instance (GA10x's
     // K-even MIO-burst loss) by a warp- and CTA-dependent start delay. Timing only: no result
     // changes.
-    if constexpr (Latency) {
+    // lab/rmma-stagger-w1 (#1245): every instance, first wave only (CTAs below the SM count),
+    // so the 1-CTA-an-SM schedules' CTA boundaries fall out of phase without a delay per CTA.
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
-        __nanosleep(static_cast<unsigned>((warp_k + blockIdx.x) & 3) * 160u);
-#endif
+    {
+        unsigned nsm;
+        asm volatile("mov.u32 %0, %%nsmid;" : "=r"(nsm));
+        if (blockIdx.x < nsm) __nanosleep(static_cast<unsigned>((warp_k + blockIdx.x) & 3) * 160u);
     }
+#endif
 #pragma unroll 1
     for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
         if (step + WK < steps) fetch(Slot1{}, step + WK);
