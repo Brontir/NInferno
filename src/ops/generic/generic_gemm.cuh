@@ -3502,8 +3502,8 @@ __launch_bounds__(Schedule::kThreads,
             constexpr int slot = decltype(slot_tag)::value;
             const int token    = token0 + group;
             const int base     = step * KStep;
-            // A token at or past T: on two and four K-warps a CTA its lanes copy token 0's
-            // activations in full (its columns are never stored), zero-filled only past the end of
+            // A token at or past T: with at most four K-warps a CTA, the token's lanes copy token
+            // 0's activations in full (its columns are never stored), zero-filled only past the end of
             // K. The zero-fill (cp.async of no source bytes) stalled the copies' issue on GA10x
             // where the weight row pitch is a whole number of 128-B lines (q4k K a multiple of
             // 2048): 12288 x 4096 SwiGLU at T1 198 -> 179 us on the RTX 3060, 77 -> 72 on the RTX
