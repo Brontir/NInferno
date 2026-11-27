@@ -48,6 +48,7 @@
 
 namespace ninferno {
 struct DeviceClass;
+struct DieRoundFacts;
 struct GpuFactsRow;
 } // namespace ninferno
 
@@ -80,6 +81,12 @@ struct Settings {
 struct Card {
     int cc = 0;
     std::string arch; // the kernel-facts snapshot ("86", "120a")
+    std::string chip; // the die as gpu_facts spells it ("ga102"), empty where unknown
+    // The die's probe facts (core/die_round_facts.h), null for a die the file does not name; the
+    // stream share is the die's or its architecture's mean, nullopt where neither has a run.
+    const DieRoundFacts* die = nullptr;
+    std::optional<double> stream_share;
+    double row_flat = 0; // the rows an SM keeps open at the full DRAM rate (die, arch, default)
     double sms = 0, clk = 0, bus = 0,
            bpc  = 0; // SMs, SM clocks a ns, DRAM bytes a ns, bytes an SM clock
     int regs_sm = 0, thr_sm = 0, blk_sm = 0;

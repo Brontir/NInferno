@@ -5,6 +5,7 @@
 
 #include "core/arch_registry.h"
 #include "core/device_class.h"
+#include "core/die_round_facts.h"
 #include "core/isa_facts.h"
 #include "core/machine_facts.h"
 #include "core/mmq_columns.h"
@@ -18,6 +19,7 @@
 #include "ops/route_pins.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cmath>
 #include <map>
@@ -210,7 +212,8 @@ std::optional<KernelFacts> r8_row(const Card& c, const std::string& codec, int W
 }
 
 // ---- the board ----
-std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns) {
+std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns,
+                              std::string chip) {
     const IsaRow* isa = nullptr;
     std::optional<IsaRow> isa_r;
     std::string arch;
@@ -236,6 +239,21 @@ std::optional<Card> card_from(int cc, int sms, double mhz, double bus_bytes_ns) 
     Card c;
     c.cc                                = cc;
     c.arch                              = arch;
+    for (char& ch : chip) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    c.chip = chip;
+    c.die  = c.chip.empty() ? nullptr : die_round_row(c.chip);
+    {
+        const DieRoundTable& df = die_round_facts();
+        if (c.die && c.die->stream_share) {
+            c.stream_share = c.die->stream_share;
+        } else if (const auto it = df.arch_stream_share.find(arch); it != df.arch_stream_share.end()) {
+            c.stream_share = it->second;
+        }
+        const auto flat_arch = df.arch_row_flat.find(arch);
+        c.row_flat           = c.die && c.die->row_flat ? *c.die->row_flat
+                               : flat_arch != df.arch_row_flat.end() ? flat_arch->second
+                                                                     : df.arch_row_flat.at("");
+    }
     c.sms                               = sms;
     c.clk                               = mhz * 1e-3;
     c.bus                               = bus_bytes_ns;
@@ -410,10 +428,59 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
     const double own  = w_dram + st + w_lat;
     const double iint = loop_i(r, &LoopCounts::int_alu);
 
+    // The rows-open slowdown of a round (analyzer rounds 26-83): the bytes law past the rows an SM
+    // keeps open at the full rate (row_flat x the probe's rows), and the die's probe at the call's
+    // own row pitch where the stride4z / stride4q8 sweep probed it (within half a byte), else the
+    // stride4k curve at its 2720-B rows where that probe loaded 64 B a request: the slower.
+    const auto rows_open = [&](double cps) {
+        double slow = std::pow(
+            std::max(1.0, cps * rows_cta * pitch / (c.row_flat * die_round_facts().probe_row_bytes)), s.g);
+        if (c.die == nullptr) return slow;
+        const double ro = cps * rows_cta * sets;
+        int wk          = 1;
+        for (const int w : {1, 2, 4, 8, 16})
+            if (w <= B) wk = w;
+        const auto read = [&](const std::map<std::string, RowsOpenCurve>& geo) -> const RowsOpenCurve* {
+            for (const std::string key : {std::to_string(wk) + "_" + std::to_string(static_cast<int>(sets)),
+                                          std::to_string(wk) + "_1"}) {
+                const auto it = geo.find(key);
+                if (it != geo.end() && !it->second.empty()) return &it->second;
+            }
+            return nullptr;
+        };
+        const auto rate_at = [&](const RowsOpenCurve& pts) {
+            double rate = ro <= pts.front().first ? pts.front().second : pts.back().second;
+            for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+                const auto [x0, y0] = pts[i];
+                const auto [x1, y1] = pts[i + 1];
+                if (x0 < ro && ro <= x1) rate = y0 + (y1 - y0) * (ro - x0) / (x1 - x0);
+            }
+            return rate;
+        };
+        const std::map<std::string, RowsOpenCurve>* at_pitch = nullptr;
+        if (!c.die->pitch.empty()) {
+            const double want = pitch / sets;
+            auto best         = c.die->pitch.begin();
+            for (auto it = c.die->pitch.begin(); it != c.die->pitch.end(); ++it)
+                if (std::abs(it->first - want) < std::abs(best->first - want)) best = it;
+            if (std::abs(best->first - want) <= 0.5) at_pitch = &best->second;
+        }
+        if (at_pitch != nullptr) {
+            if (const RowsOpenCurve* pts = read(*at_pitch))
+                slow = std::max(slow, 1.0 / std::max(rate_at(*pts), 0.05));
+        } else if (c.die->request && *c.die->request == "64 B" && !c.die->curve.empty()) {
+            if (const RowsOpenCurve* pts = read(c.die->curve)) slow = std::max(slow, 1.0 / rate_at(*pts));
+        }
+        return slow;
+    };
+    // The latency instance on a die with a stream share (round 61): its CTAs run in phase, so a
+    // round is its bytes at the die's stream share plus the code outside at its static stall
+    // clocks (one warp runs the epilogue), the loop hidden under the bytes; a call under one round
+    // is one wave, its K loop's stall clocks exposed (round 82). Never below the SM side.
+    const bool latency_round = latency_row && c.stream_share.has_value();
     const auto rnd = [&](double cps, double nc, double o) {
-        const double dram =
-            nc * bcta / bus * std::pow(std::max(1.0, cps * rows_cta * pitch / c.l1), s.g);
-        const double cm = std::max(nc / sms, 1.0);
+        const double dram = nc * bcta / bus * rows_open(cps);
+        const double cm   = std::max(nc / sms, 1.0);
         const double tau =
             std::max({own, red * cps * warps * iint / kPartitions / clk + (1.0 - red) * own,
                       // the issue bound: the warps of the busiest SM's CTAs, an instruction a
@@ -421,10 +488,34 @@ double price_rmma(const Card& c, const Settings& s, const KernelFacts& r, bool l
                       cps * warps * tot / kPartitions / clk,
                       emu > 0 ? cm * warps * (tot + emu) / kPartitions / clk : 0.0});
         const double sm = trips * tau + o + nc * bcta / bus / static_cast<double>(B);
+        if (latency_round) {
+            const double o4   = c.lat != 0 ? o / c.lat : o;
+            const double d4   = dram / *c.stream_share;
+            const double body = nfull < 1 ? d4 + trips * st + o4 : d4 + o4;
+            return std::max(body, trips * tau + o4);
+        }
         return std::sqrt(sm * sm + dram * dram);
     };
     const auto part = [&](double x) { return std::max(std::min(std::ceil(x / sms), occ), 1.0); };
-    const double ln = launch_ns(c, s, ctas);
+    double ln       = launch_ns(c, s, ctas);
+    if (latency_row) {
+        // The latency instance's head (rounds 66-69): a call under one round waits one DRAM
+        // latency; else the die's common head once a launch and, at one CTA an SM, the counted
+        // drain of each wave its CTAs stay in phase (a DRAM round trip, the epilogue at static
+        // clocks and one trip's chain), at most the die's in-phase waves (or that share of a
+        // drain every round on a die that never leaves phase).
+        if (nfull < 1) {
+            ln += c.l0;
+        } else {
+            if (c.die && c.die->head_t1_ns) ln += *c.die->head_t1_ns;
+            if (occ <= 1.0 && c.die && (c.die->in_phase_waves || c.die->in_phase_share)) {
+                const double rounds = std::max(ctas / slots, 1.0);
+                const double drain  = c.l0 + out / (c.lat != 0 ? c.lat : 1.0) + own;
+                ln += drain * (c.die->in_phase_waves ? std::min(*c.die->in_phase_waves, rounds)
+                                                     : *c.die->in_phase_share * rounds);
+            }
+        }
+    }
     if (nfull < 1) return ln + rnd(part(ctas), tail, out);
     return ln + rnd(occ, slots, out) + (nfull - 1.0) * rnd(occ, slots, out) +
            (tail > 0 ? rnd(part(tail), tail, out) : 0.0);
@@ -507,10 +598,24 @@ double price_r8(const Card& c, const Settings& s, const KernelFacts& r, double n
     }
     const double rounds = std::ceil(ctas / slots);
     const double last   = ctas - (rounds - 1) * slots;
-    const auto rnd      = [&](double nc) {
-        return std::hypot(chain,
-                               std::max(nc * Wp * R * pitch / bus,
-                                        nc * Wp * trips * act * c.nr_wf / (std::min(nc, sms) * clk)));
+    const auto mem      = [&](double nc) {
+        return std::max(nc * Wp * R * pitch / bus,
+                        nc * Wp * trips * act * c.nr_wf / (std::min(nc, sms) * clk));
+    };
+    // r8 at T 1 on a die with a stream share (rounds 61, 105): the CTA quantizes its activation into
+    // shared memory and its chain hides under the bytes, so a round combines the bytes at the die's
+    // stream share with the chain (the code outside at its static clocks) as two rate limits, the
+    // variants keeping the order of their counted chains; never below the round's memory side.
+    const bool t1 = T <= 1 && c.stream_share.has_value();
+    const double ch4 =
+        t1 ? trips * trip + (c.lat != 0 ? out / c.lat : out) +
+                 k / 1024.0 / Wp *
+                     (pro(r, &PrologueCounts::stall_sum) / clk +
+                      pro(r, &PrologueCounts::global_waits) * c.l2lat_ns)
+           : 0.0;
+    const auto rnd = [&](double nc) {
+        if (t1) return std::max(std::hypot(nc * Wp * R * pitch / bus / *c.stream_share, ch4), mem(nc));
+        return std::hypot(chain, mem(nc));
     };
     return launch_ns(c, s, ctas) + (T <= 1 ? 0.0 : pre) + (rounds - 1) * rnd(slots) + rnd(last);
 }
@@ -1162,7 +1267,7 @@ std::optional<QType> format_of_name(std::string_view name) {
 std::optional<Card> card_of(const GpuFactsRow& row) {
     const int mhz =
         row.form == FormFactor::Laptop && row.boost_min_mhz > 0 ? row.boost_min_mhz : row.boost_mhz;
-    return card_from(row.major * 10 + row.minor, row.sms, mhz, row.bus_bits * row.gbps / 8.0);
+    return card_from(row.major * 10 + row.minor, row.sms, mhz, row.bus_bits * row.gbps / 8.0, row.chip);
 }
 
 std::optional<Card> card_of(const DeviceClass& device) {
@@ -1171,7 +1276,7 @@ std::optional<Card> card_of(const DeviceClass& device) {
     const MachineFacts& f = device.facts;
     if (f.reference_clock_khz <= 0 || f.dram_gbps() <= 0) return std::nullopt;
     return card_from(device.compute_capability(), device.sms, f.reference_clock_khz * 1e-3,
-                     f.dram_gbps());
+                     f.dram_gbps(), device.chip);
 }
 
 std::optional<double> price_ns(const Card& card, const Call& call, std::string_view route,

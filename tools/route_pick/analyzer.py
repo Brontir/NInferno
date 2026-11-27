@@ -231,7 +231,6 @@ def cluster_cap(c, C):
 # r28: the share of the bus rate a die sustains under stream loads: the flat level of its stride4f curve, 0.92-0.95 of peak
 # on every die measured (GA102, GA106, AD102, AD106, TU102, GB202, GB203; the srnd probes' bus-bound slope 1.06-1.09 on
 # every family). One probe fact (sm_rate_facts: stream_share), 0.94 until each die's own value is in.
-STREAM_SHARE = 0.94
 
 
 
